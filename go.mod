@@ -1,4 +1,4 @@
-module github.com/orion-labs/jwt-ssh-agent-go
+module github.com/nikogura/jwt-ssh-agent-go
 
 go 1.12
 

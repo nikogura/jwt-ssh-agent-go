@@ -1,12 +1,12 @@
 # jwt-ssh-agent-go
 
-[![CircleCI](https://circleci.com/gh/orion-labs/jwt-ssh-agent-go.svg?style=svg)](https://circleci.com/gh/orion-labs/jwt-ssh-agent-go)
+[![CircleCI](https://circleci.com/gh/nikogura/jwt-ssh-agent-go.svg?style=svg)](https://circleci.com/gh/nikogura/jwt-ssh-agent-go)
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/orion-labs/jwt-ssh-agent-go)](https://goreportcard.com/report/github.com/orion-labs/jwt-ssh-agent-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/nikogura/jwt-ssh-agent-go)](https://goreportcard.com/report/github.com/nikogura/jwt-ssh-agent-go)
 
-[![Coverage Status](https://codecov.io/gh/orion-labs/jwt-ssh-agent-go/branch/master/graph/badge.svg)](https://codecov.io/gh/orion-labs/jwt-ssh-agent-go)
+[![Coverage Status](https://codecov.io/gh/nikogura/jwt-ssh-agent-go/branch/master/graph/badge.svg)](https://codecov.io/gh/nikogura/jwt-ssh-agent-go)
 
-[![Go Doc](https://img.shields.io/badge/godoc-reference-blue.svg?style=flat-square)](http://godoc.org/github.com/orion-labs/jwt-ssh-agent-go/pkg/agentjwt)
+[![Go Doc](https://img.shields.io/badge/godoc-reference-blue.svg?style=flat-square)](http://godoc.org/github.com/nikogura/jwt-ssh-agent-go/pkg/agentjwt)
 
 Create and JWT Tokens with private keys from a running ssh-agent.  Parse and validate them with SSH public keys.
 
@@ -49,7 +49,7 @@ How you get them is up to you, but at it's crudest:
     }
     
     // Read the default public key
-    pubkeyBytes, err := ioutil.ReadFile(fmt.Sprintf("%s/.ssh/id_rsa.pub", userObj.HomeDir))
+    pubkeyBytes, err := os.ReadFile(fmt.Sprintf("%s/.ssh/id_rsa.pub", userObj.HomeDir))
     if err != nil {
       log.Fatalf("Failed to read public key file: %s", err)
     }
@@ -95,7 +95,3 @@ How you get them is up to you, but at it's crudest:
 This of course presupposes the remote server is prepared to handle JWT's of this type.  Most will not be able to handle it off the shelf.  
 
 The TestServer struct in this package demonstrates a minimal example of an HTTP server that can be expanded upon to provide this functionality.
-
-## Limitations
-
-This library in its current form only works for RSA keys.  To support the full range of keys creatable via `ssh-keygen` more work will need to be done.  Stay tuned.
