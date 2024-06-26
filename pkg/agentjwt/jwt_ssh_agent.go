@@ -25,99 +25,89 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 	"math/big"
-	"net"
-	"os"
 	"reflect"
+	"strings"
 	"time"
 )
 
 // MAX_TOKEN_DURATION is the maximum duration allowed on a signed token.
 const MAX_TOKEN_DURATION = 300
 
-// SigningMethodRSAAgent is a JWT Signing method that produces RS256 signatures from a running ssh-agent.
-type SigningMethodRSAAgent struct {
-	Name string
-	Hash crypto.Hash
-}
+// SignedJwtToken takes a subject, and a public key string (as provided by ssh-agent or ssh-keygen) and creates a signed JWT Token by asking the ssh-agent politely to sign the token claims.  The token is good for MAX_TOKEN_DURATION seconds.
+func SignedJwtToken(subject string, pubkey string) (token string, err error) {
+	now := time.Now()
+	expiration := now.Add(time.Duration(MAX_TOKEN_DURATION) * time.Second)
 
-// Alg returns the name of the name of the algorithm used by the signing method
-func (m *SigningMethodRSAAgent) Alg() string {
-	return m.Name
-}
-
-// Verify verifies the signature on the JWT Token in the normal JWT RS256 fashion
-func (m *SigningMethodRSAAgent) Verify(signingString, signature string, key interface{}) (err error) {
-	var sig []byte
-	if sig, err = jwt.DecodeSegment(signature); err != nil {
-		err = errors.Wrap(err, "failed to decode signature")
-		return err
+	rBytes := make([]byte, 32)
+	if _, err := rand.Read(rBytes); err != nil {
+		err = errors.Wrapf(err, "failed generating random JWT id")
+		return token, err
 	}
 
-	var rsaKey rsa.PublicKey
-	var ok bool
+	id := hex.EncodeToString(rBytes)
 
-	if rsaKey, ok = key.(rsa.PublicKey); !ok {
-		return jwt.ErrInvalidKeyType
+	claims := &jwt.StandardClaims{
+		Id:        id,
+		IssuedAt:  now.Unix(),
+		NotBefore: now.Unix(),
+		ExpiresAt: expiration.Unix(),
+		Subject:   subject,
+		Issuer:    subject, // Subject and issuer match, cos that's how this ssh-agent pubkey auth stuff works - you auth yourself.  It's up to the server to decide if it trusts you.
 	}
 
-	// Create hasher
-	if !m.Hash.Available() {
-		err = errors.Wrap(err, "failed checking hash availability")
-		return jwt.ErrHashUnavailable
-	}
-	hasher := m.Hash.New()
-	hasher.Write([]byte(signingString))
+	// Figure out what algorithm is used, and switch on it
+	parts := strings.Split(pubkey, " ")
 
-	// Verify the signature
-	err = rsa.VerifyPKCS1v15(&rsaKey, m.Hash, hasher.Sum(nil), sig)
+	// Pubkey must have an algorithm and key, separated by a space.  Comment is optional and ignored.
+	if len(parts) < 2 {
+		err = errors.New(fmt.Sprintf("not enough fields in public key"))
+		return token, err
+	}
+
+	algo := parts[0]
+
+	// set up the JWT Token
+	var tok *jwt.Token
+
+	switch algo {
+	case "ssh-rsa":
+		signingMethodRS256Agent := &SigningMethodRSAAgent{"RS256", crypto.SHA256}
+		jwt.RegisterSigningMethod(signingMethodRS256Agent.Alg(), func() jwt.SigningMethod {
+			return signingMethodRS256Agent
+		})
+
+		tok = jwt.NewWithClaims(signingMethodRS256Agent, claims)
+
+	case "ssh-ed25519":
+		signingMethodED25519Agent := &SigningMethodED25519Agent{"EdDSA", crypto.SHA256}
+		jwt.RegisterSigningMethod(signingMethodED25519Agent.Alg(), func() jwt.SigningMethod {
+			return signingMethodED25519Agent
+		})
+
+		tok = jwt.NewWithClaims(signingMethodED25519Agent, claims)
+
+	default:
+		err = errors.New(fmt.Sprintf("unsupported key type %q", algo))
+		return token, err
+	}
+
+	pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubkey))
 	if err != nil {
-		err = errors.Wrap(err, "authentication failed")
-		return err
+		err = errors.Wrap(err, "failed to parse public key")
+		return token, err
 	}
 
-	return err
-}
-
-// Sign sends a request to the running ssh-agent to sign the header and claims of the JWT.  This is pretty much the normal RS256 mechanism, but it doesn't require the private key in order to sign.  The private key is held by the ssh-agent.
-func (m *SigningMethodRSAAgent) Sign(signingString string, key interface{}) (sig string, err error) {
-	var pubKey ssh.PublicKey
-	var ok bool
-
-	if pubKey, ok = key.(ssh.PublicKey); !ok {
-		err = errors.New(fmt.Sprintf("Invalid key type: %s", reflect.TypeOf(key).String()))
-		return sig, err
-	}
-
-	sock := os.Getenv("SSH_AUTH_SOCK")
-	if sock == "" {
-		err = errors.New("No SSH_AUTH_SOCK in env")
-		return sig, err
-	}
-
-	conn, err := net.Dial("unix", sock)
+	token, err = tok.SignedString(pubKey)
 	if err != nil {
-		err = errors.Wrap(err, "failed to connect to SSH_AUTH_SOCK")
-		return sig, err
+		err = errors.Wrap(err, "failed to sign token")
+		return token, err
 	}
 
-	a := agent.NewClient(conn)
-
-	if a != nil {
-		signature, err := a.SignWithFlags(pubKey, []byte(signingString), agent.SignatureFlagRsaSha256)
-		if err != nil {
-			err = errors.Wrap(err, "failed to sign with agent")
-			return sig, err
-		}
-
-		sig = jwt.EncodeSegment(signature.Blob)
-	}
-
-	return sig, err
+	return token, err
 }
 
-// ParsePubkeySignedToken takes a token string that has been signed by the ssh-agent (RS256)
+// VerifyToken takes a token string that has been signed by the ssh-agent (RS256)
 // The Subject of the token (user authenticating) is part of the claims on the token.
 // Subject in claim is used to retrieve the public key which is used to verify the signature of the token.
 // The pubkeyFunc takes the subject, and produces a public key by some means.
@@ -125,51 +115,11 @@ func (m *SigningMethodRSAAgent) Sign(signingString string, key interface{}) (sig
 // If the subject (which came from the client) produces a different pubkey (as if the user set the wrong subject), validation will fail.
 // If the claims are tampered with, the validation will fail
 // Security of this method depends entirely on pubkeyFunc being able to produce a pubkey for the subject that corresponds to a private key held by the requestor.
-func ParsePubkeySignedToken(tokenString string, pubkeyFunc func(subject string) (pubkey string, err error)) (subject string, token *jwt.Token, err error) {
-	// Make a token object, part of which is acquiring the appropriate public key with which to verify said token.
-	token, err = jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		subject = token.Claims.(jwt.MapClaims)["sub"].(string)
-
-		// Verify that we've been sent the right kind of token in the first place
-		if _, ok := token.Method.(*SigningMethodRSAAgent); !ok {
-			t := reflect.TypeOf(token.Method)
-			err := errors.New(fmt.Sprintf("Unsupported signing method: %s", t.String()))
-			return nil, err
-		}
-
-		pubkey, err := pubkeyFunc(subject)
-		if err != nil {
-			err = errors.Wrapf(err, "failed to produce public key for %s", subject)
-			return nil, err
-		}
-
-		// need to convert from ssh.PublicKey to rsa.PublicKey  This is a mess.
-		sshPubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubkey))
-		if err != nil {
-			err = errors.Wrap(err, "failed to parse authorized key")
-			return nil, err
-		}
-
-		// Only way to do this that I'm aware of is nastily via reflection.
-		// field 0 "N" is modulus
-		// filed 1 "E" is public exponent
-
-		val := reflect.ValueOf(sshPubKey).Elem()
-
-		modulus := val.Field(0).Interface().(*big.Int)
-		exponent := val.Field(1).Interface().(int)
-
-		var key rsa.PublicKey
-		key.E = exponent
-		key.N = modulus
-
-		// It does, however, work, and that's what counts.
-		return key, nil
-	})
-
+func VerifyToken(tokenString string, pubkeyFunc func(subject string) (pubkey string, err error)) (subject string, token *jwt.Token, err error) {
+	subject, token, err = ParseToken(tokenString, pubkeyFunc)
 	if err != nil {
 		err = errors.Wrapf(err, "failed to parse token")
-		return "", nil, err
+		return subject, token, err
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
@@ -223,51 +173,94 @@ func ParsePubkeySignedToken(tokenString string, pubkeyFunc func(subject string) 
 		return subject, token, err
 	}
 
-	err = errors.New("Unparsable token claims")
+	err = errors.New("unparsable token")
 	return "", nil, err
 }
 
-// SignedJwtToken takes a subject, and a public key string (as provided by ssh-agent or ssh-keygen) and creates a signed JWT Token by asking the ssh-agent politely to sign the token claims.  The token is good for MAX_TOKEN_DURATION seconds.
-func SignedJwtToken(subject string, pubkey string) (token string, err error) {
-	now := time.Now()
-	expiration := now.Add(time.Duration(MAX_TOKEN_DURATION) * time.Second)
+func ParseToken(tokenString string, pubkeyFunc func(subject string) (pubkey string, err error)) (subject string, token *jwt.Token, err error) {
+	// Make a token object, part of which is acquiring the appropriate public key with which to verify said token.
+	// Requires closure over 'subject' variable.  Subject is defined here in the parent function but it's set inside the closure below.
+	token, err = jwt.Parse(
+		tokenString,
+		func(token *jwt.Token) (key interface{}, err error) { // fugly anonymous function, but that's how jwt.Parse() works.
+			// this is where subject gets set.
+			subject = token.Claims.(jwt.MapClaims)["sub"].(string)
 
-	rBytes := make([]byte, 32)
-	if _, err := rand.Read(rBytes); err != nil {
-		err = errors.Wrapf(err, "failed generating random JWT id")
-		return token, err
-	}
+			switch reflect.TypeOf(token.Method).String() {
+			case "*agentjwt.SigningMethodRSAAgent":
+			case "*agentjwt.SigningMethodED25519Agent":
+			default:
+				t := reflect.TypeOf(token.Method)
+				err = errors.New(fmt.Sprintf("Unsupported signing method: %s", t.String()))
 
-	id := hex.EncodeToString(rBytes)
+				return token, err
+			}
 
-	claims := &jwt.StandardClaims{
-		Id:        id,
-		IssuedAt:  now.Unix(),
-		NotBefore: now.Unix(),
-		ExpiresAt: expiration.Unix(),
-		Subject:   subject,
-		Issuer:    subject, // Subject and issuer match, cos that's how this ssh-agent pubkey auth stuff works - you auth yourself.  It's up to the server to decide if it trusts you.
-	}
+			// Run the pubkeyFunc to get the public key for this user
+			pubkey, err := pubkeyFunc(subject)
+			if err != nil {
+				err = errors.Wrapf(err, "failed to produce public key for %s", subject)
+				return token, err
+			}
 
-	// set up the JWT Token
-	SigningMethodRS256Agent := &SigningMethodRSAAgent{"RS256", crypto.SHA256}
-	jwt.RegisterSigningMethod(SigningMethodRS256Agent.Alg(), func() jwt.SigningMethod {
-		return SigningMethodRS256Agent
-	})
+			// If we don't get a public key for this user, the user isn't allowed in.
+			if pubkey == "" {
+				err = errors.New(fmt.Sprintf("unknown user %q", subject))
+				return token, err
+			}
 
-	t := jwt.NewWithClaims(SigningMethodRS256Agent, claims)
+			// Figure out what algorithm is used, and switch on it
+			parts := strings.Split(pubkey, " ")
 
-	pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubkey))
-	if err != nil {
-		err = errors.Wrap(err, "failed to parse public key")
-		return token, err
-	}
+			// Pubkey must have an algorithm and key, separated by a space.  Comment is optional and ignored.
+			if len(parts) < 2 {
+				err = errors.New(fmt.Sprintf("not enough fields in public key"))
+				return token, err
+			}
 
-	token, err = t.SignedString(pubKey)
-	if err != nil {
-		err = errors.Wrap(err, "failed to sign token")
-		return token, err
-	}
+			algo := parts[0]
 
-	return token, err
+			switch algo {
+			case "ssh-rsa":
+				// need to convert from ssh.PublicKey to rsa.PublicKey  This is a mess.
+				pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubkey))
+				if err != nil {
+					err = errors.Wrapf(err, "failed parsing %s public key", algo)
+					return key, err
+				}
+
+				// Only way to do this that I'm aware of is nastily via reflection.
+				// field 0 "N" is modulus
+				// filed 1 "E" is public exponent
+
+				val := reflect.ValueOf(pubKey).Elem()
+
+				modulus := val.Field(0).Interface().(*big.Int)
+				exponent := val.Field(1).Interface().(int)
+
+				var key rsa.PublicKey
+				key.E = exponent
+				key.N = modulus
+
+				// It does, however, work, and that's what counts.
+				return key, err
+
+			case "ssh-ed25519":
+				pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubkey))
+				if err != nil {
+					err = errors.Wrapf(err, "failed parsing %s public key", algo)
+					return nil, err
+				}
+
+				key = pubKey
+
+				return key, err
+			default:
+				err = errors.New(fmt.Sprintf("unsupported key type %q", algo))
+				return nil, err
+			}
+		},
+	)
+
+	return subject, token, err
 }

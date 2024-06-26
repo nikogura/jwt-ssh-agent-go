@@ -48,7 +48,7 @@ func (d *TestServer) RootHandler(w http.ResponseWriter, r *http.Request) {
 	tokenString := r.Header.Get("Token")
 
 	// Parse the token, which includes setting up it's internals so it can be verified.
-	subject, token, err := ParsePubkeySignedToken(tokenString, d.PubkeyFunc)
+	subject, token, err := VerifyToken(tokenString, d.PubkeyFunc)
 	if err != nil {
 		log.Printf("Error: %s", err)
 		w.WriteHeader(http.StatusBadRequest)

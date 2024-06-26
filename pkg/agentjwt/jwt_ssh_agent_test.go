@@ -22,9 +22,11 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"github.com/mikesmitty/edkey"
 	"github.com/phayes/freeport"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
+	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/ssh"
 	"log"
 	"net/http"
@@ -72,15 +74,15 @@ func setUp() {
 
 	trustedKeys = make(map[string]string)
 
-	// Set up the repo server
-	repo := TestServer{
+	// Set up the test server
+	server := TestServer{
 		Address:    "127.0.0.1",
 		Port:       port,
 		PubkeyFunc: pubkeyForUsername,
 	}
 
 	// Run it in the background
-	go repo.RunTestServer()
+	go server.RunTestServer()
 
 	// spin up an agent
 	ssh, err := exec.LookPath("ssh-agent")
@@ -138,6 +140,7 @@ func pubkeyForUsername(username string) (pubkey string, err error) {
 
 func generateRSAKey(privateKeyPath string, blockSize int) (err error) {
 	pubKeyPath := fmt.Sprintf("%s.pub", privateKeyPath)
+
 	if blockSize == 0 {
 		blockSize = 2048
 	}
@@ -173,17 +176,53 @@ func generateRSAKey(privateKeyPath string, blockSize int) (err error) {
 
 	privatePEM := pem.EncodeToMemory(&privBlock)
 
-	fmt.Printf("Writing RSA private key to %s\n", privateKeyPath)
 	err = os.WriteFile(privateKeyPath, privatePEM, 0600)
 	if err != nil {
 		err = errors.Wrapf(err, "failed to write private key to %s", privateKeyPath)
 		return err
 	}
 
-	fmt.Printf("Writing RSA public key to %s\n", pubKeyPath)
 	err = os.WriteFile(pubKeyPath, pubKeyBytes, 0644)
 	if err != nil {
 		err = errors.Wrapf(err, "failed to write public key to %s", pubKeyPath)
+		return err
+	}
+
+	return err
+}
+
+func generateED25519Key(privateKeyPath string) (err error) {
+	publicKeyPath := fmt.Sprintf("%s.pub", privateKeyPath)
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		err = errors.Wrapf(err, "key generation error")
+		return err
+	}
+
+	block := &pem.Block{
+		Type:  "OPENSSH PRIVATE KEY",
+		Bytes: edkey.MarshalED25519PrivateKey(priv),
+	}
+
+	err = os.WriteFile(privateKeyPath, pem.EncodeToMemory(block), 0600)
+	if err != nil {
+		err = errors.Wrapf(err, "failed writing private key to %s", privateKeyPath)
+		return err
+	}
+
+	// public key
+	pubKey, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		err = errors.Wrapf(err, "failed converting public key")
+		return err
+	}
+
+	authKey := ssh.MarshalAuthorizedKey(pubKey)
+
+	err = os.WriteFile(publicKeyPath, authKey, 0644)
+	if err != nil {
+		err = errors.Wrapf(err, "failed writing public key to %s", publicKeyPath)
 		return err
 	}
 
@@ -196,14 +235,21 @@ func setupTestKey(username string, keyType string, trusted bool) (publicKey stri
 
 	switch keyType {
 	case "RSA":
+		err = generateRSAKey(privateKeyPath, 2048)
+		if err != nil {
+			err = errors.Wrapf(err, "Error generating %s key for %s", keyType, username)
+			return publicKey, err
+		}
+
+	case "ED25519":
+		err = generateED25519Key(privateKeyPath)
+		if err != nil {
+			err = errors.Wrapf(err, "Error generating %s key for %s", keyType, username)
+			return publicKey, err
+		}
+
 	default:
 		err = errors.New(fmt.Sprintf("Unsupported key type %q", keyType))
-		return publicKey, err
-	}
-
-	err = generateRSAKey(privateKeyPath, 2048)
-	if err != nil {
-		err = errors.Wrapf(err, "Error generating %s key for %s", keyType, username)
 		return publicKey, err
 	}
 
@@ -253,14 +299,26 @@ func TestPubkeyAuth(t *testing.T) {
 		expected error
 	}{
 		{
-			"trusted-user",
+			"trusted-rsa-user",
 			"RSA",
 			true,
 			nil,
 		},
 		{
-			"untrusted-user",
+			"untrusted-rsa-user",
 			"RSA",
+			false,
+			errors.New("Bad Response: 400"), // This is a kludge.  Fix it.
+		},
+		{
+			"trusted-ed25519-user",
+			"ED25519",
+			true,
+			nil,
+		},
+		{
+			"trusted-ed25519-user",
+			"ED25519",
 			false,
 			errors.New("Bad Response: 400"), // This is a kludge.  Fix it.
 		},
@@ -269,7 +327,7 @@ func TestPubkeyAuth(t *testing.T) {
 	for _, tc := range inputs {
 		pubkey, err := setupTestKey(tc.username, tc.keyType, tc.trusted)
 		if err != nil {
-			t.Fatalf("failed setting up test key: %s", err)
+			t.Fatalf("failed setting up %s test key for %s: %s", tc.keyType, tc.username, err)
 		}
 
 		assert.NotEmpty(t, pubkey, "Empty public key!")
@@ -279,7 +337,7 @@ func TestPubkeyAuth(t *testing.T) {
 			path := ""
 			url := fmt.Sprintf("%s:%d/%s", address, port, path)
 
-			fmt.Printf("Testing %s with key type %s\n", tc.username, tc.keyType)
+			//fmt.Printf("Testing %s with key type %s\n", tc.username, tc.keyType)
 
 			req, err := http.NewRequest("GET", url, nil)
 			if err != nil {

@@ -30,7 +30,9 @@ The JWT spec provides for token signing via both symmetric and asymmetric crypto
 
 In order to avoid the twin evils of unencrypted keys and constantly typing in one's passphrase, the venerable `ssh-agent` can be used to hold the SSH private key in escrow and sign messages with it when asked nicely.
 
-The JWT spec and `ssh-agent` have a single hashing algorithm in common.  JWT calls it "RS256".  `ssh-agent` calls it RSA SHA 256.  Names aside, they use the SHA 256 algorithm to hash messages that are later signed by the user's private key and verified by the remote server to establish identity.
+The JWT spec and `ssh-agent` have a number of hashing algorithms in common.  JWT calls "RSASSA-PKCS1-v1_5 using SHA-256" "RS256".  `ssh-agent` calls it RSA SHA 256.  Names aside, they use the SHA 256 algorithm to hash messages that are later signed by the user's private key and verified by the remote server to establish identity.
+
+More recently, the EdDSA algorithms, such as ED25519 have come the fore as one of the more widely supported eliptic-curve algorithms.  JWT calls this "EdDSA".
 
 While the hashing algorithms are compatible, the normal use cases for each system are slightly different and therefore required some extra work to connect the two.  
 
