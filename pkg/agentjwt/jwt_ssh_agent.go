@@ -22,7 +22,7 @@ import (
 	"crypto/rsa"
 	"encoding/hex"
 	"fmt"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
 	"math/big"
@@ -47,13 +47,13 @@ func SignedJwtToken(subject string, pubkey string) (token string, err error) {
 
 	id := hex.EncodeToString(rBytes)
 
-	claims := &jwt.StandardClaims{
-		Id:        id,
-		IssuedAt:  now.Unix(),
-		NotBefore: now.Unix(),
-		ExpiresAt: expiration.Unix(),
+	claims := &jwt.RegisteredClaims{
+		ID:        id,
+		IssuedAt:  jwt.NewNumericDate(now),
+		NotBefore: jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(expiration),
 		Subject:   subject,
-		Issuer:    subject, // Subject and issuer match, cos that's how this ssh-agent pubkey auth stuff works - you auth yourself.  It's up to the server to decide if it trusts you.
+		Issuer:    subject, // Subject and issuer match, cos that's how this ssh-agent pubkey auth stuff works - you auth yourself by proving you can sign a method with the private key.  It's up to the server to decide if it trusts you - based on your public key being registered.
 	}
 
 	// Figure out what algorithm is used, and switch on it
