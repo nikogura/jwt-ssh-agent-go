@@ -2,7 +2,10 @@ package agentjwt
 
 import (
 	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
@@ -93,4 +96,57 @@ func (m *SigningMethodRSAAgent) Sign(signingString string, key interface{}) (sig
 	}
 
 	return sig, err
+}
+
+func GenerateRSAKey(privateKeyPath string, blockSize int) (err error) {
+	pubKeyPath := fmt.Sprintf("%s.pub", privateKeyPath)
+
+	if blockSize == 0 {
+		blockSize = 2048
+	}
+
+	// generate private key
+	privateKey, err := rsa.GenerateKey(rand.Reader, blockSize)
+	if err != nil {
+		err = errors.Wrapf(err, "failed to generate key")
+		return err
+	}
+
+	err = privateKey.Validate()
+	if err != nil {
+		err = errors.Wrapf(err, "generated key failed to validate")
+		return err
+	}
+
+	// generate public key
+	publicKey, err := ssh.NewPublicKey(privateKey.Public())
+	if err != nil {
+		err = errors.Wrapf(err, "failed to generate public key")
+		return err
+	}
+
+	pubKeyBytes := ssh.MarshalAuthorizedKey(publicKey)
+
+	privateDER := x509.MarshalPKCS1PrivateKey(privateKey)
+	privBlock := pem.Block{
+		Type:    "RSA PRIVATE KEY",
+		Headers: nil,
+		Bytes:   privateDER,
+	}
+
+	privatePEM := pem.EncodeToMemory(&privBlock)
+
+	err = os.WriteFile(privateKeyPath, privatePEM, 0600)
+	if err != nil {
+		err = errors.Wrapf(err, "failed to write private key to %s", privateKeyPath)
+		return err
+	}
+
+	err = os.WriteFile(pubKeyPath, pubKeyBytes, 0644)
+	if err != nil {
+		err = errors.Wrapf(err, "failed to write public key to %s", pubKeyPath)
+		return err
+	}
+
+	return err
 }

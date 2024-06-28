@@ -2,9 +2,13 @@ package agentjwt
 
 import (
 	"crypto"
+	"crypto/rand"
+	"encoding/pem"
 	"fmt"
 	"github.com/dgrijalva/jwt-go"
+	"github.com/mikesmitty/edkey"
 	"github.com/pkg/errors"
+	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"net"
@@ -89,4 +93,42 @@ func (m *SigningMethodED25519Agent) Sign(signingString string, key interface{}) 
 	}
 
 	return sig, err
+}
+
+func GenerateED25519Key(privateKeyPath string) (err error) {
+	publicKeyPath := fmt.Sprintf("%s.pub", privateKeyPath)
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		err = errors.Wrapf(err, "key generation error")
+		return err
+	}
+
+	block := &pem.Block{
+		Type:  "OPENSSH PRIVATE KEY",
+		Bytes: edkey.MarshalED25519PrivateKey(priv),
+	}
+
+	err = os.WriteFile(privateKeyPath, pem.EncodeToMemory(block), 0600)
+	if err != nil {
+		err = errors.Wrapf(err, "failed writing private key to %s", privateKeyPath)
+		return err
+	}
+
+	// public key
+	pubKey, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		err = errors.Wrapf(err, "failed converting public key")
+		return err
+	}
+
+	authKey := ssh.MarshalAuthorizedKey(pubKey)
+
+	err = os.WriteFile(publicKeyPath, authKey, 0644)
+	if err != nil {
+		err = errors.Wrapf(err, "failed writing public key to %s", publicKeyPath)
+		return err
+	}
+
+	return err
 }

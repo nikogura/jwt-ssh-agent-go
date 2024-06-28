@@ -17,23 +17,13 @@ limitations under the License.
 package agentjwt
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
-	"github.com/mikesmitty/edkey"
 	"github.com/phayes/freeport"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
-	"golang.org/x/crypto/ed25519"
-	"golang.org/x/crypto/ssh"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
-	"regexp"
-	"strings"
 	"testing"
 )
 
@@ -85,31 +75,14 @@ func setUp() {
 	go server.RunTestServer()
 
 	// spin up an agent
-	ssh, err := exec.LookPath("ssh-agent")
+	binary, pid, sock, err := StartTestAgent()
 	if err != nil {
-		log.Fatalf("ssh-agent not found in path: %s", err)
+		log.Fatalf("Error spinning up Test SSH Agent: %s", err)
 	}
 
-	sshAgentBinary = ssh
-
-	out, err := exec.Command(sshAgentBinary).Output()
-	if err != nil {
-		log.Fatalf("Failed starting ssh-agent: %s", err)
-	}
-
-	pidrx := regexp.MustCompile(`SSH_AGENT_PID=`)
-	sockrx := regexp.MustCompile(`SSH_AUTH_SOCK=`)
-	parts := strings.Split(string(out), ";")
-
-	for _, p := range parts {
-		if pidrx.MatchString(p) {
-			parts := strings.Split(p, "=")
-			agentPid = parts[1]
-		} else if sockrx.MatchString(p) {
-			parts := strings.Split(p, "=")
-			agentSock = parts[1]
-		}
-	}
+	sshAgentBinary = binary
+	agentPid = pid
+	agentSock = sock
 
 	// override SSH_AUTH_SOCK to point at the test agent
 	_ = os.Setenv("SSH_AGENT_PID", agentPid)
@@ -121,13 +94,9 @@ func tearDown() {
 	if _, err := os.Stat(tmpDir); !os.IsNotExist(err) {
 		_ = os.Remove(tmpDir)
 	}
-	// Teardown the agent ssh-agent -k SSH_AGENT_PID
-	cmd := exec.Command(sshAgentBinary, "-k")
-	cmd.Env = []string{
-		fmt.Sprintf("SSH_AGENT_PID=%s", agentPid),
-	}
 
-	err := cmd.Run()
+	// Teardown the agent ssh-agent -k SSH_AGENT_PID
+	err := KillTestAgent(sshAgentBinary, agentPid)
 	if err != nil {
 		log.Fatalf("Failed killing ssh-agent: %s", err)
 	}
@@ -136,159 +105,6 @@ func tearDown() {
 func pubkeyForUsername(username string) (pubkey string, err error) {
 	pubkey = trustedKeys[username]
 	return pubkey, err
-}
-
-func generateRSAKey(privateKeyPath string, blockSize int) (err error) {
-	pubKeyPath := fmt.Sprintf("%s.pub", privateKeyPath)
-
-	if blockSize == 0 {
-		blockSize = 2048
-	}
-
-	// generate private key
-	privateKey, err := rsa.GenerateKey(rand.Reader, blockSize)
-	if err != nil {
-		err = errors.Wrapf(err, "failed to generate key")
-		return err
-	}
-
-	err = privateKey.Validate()
-	if err != nil {
-		err = errors.Wrapf(err, "generated key failed to validate")
-		return err
-	}
-
-	// generate public key
-	publicKey, err := ssh.NewPublicKey(privateKey.Public())
-	if err != nil {
-		err = errors.Wrapf(err, "failed to generate public key")
-		return err
-	}
-
-	pubKeyBytes := ssh.MarshalAuthorizedKey(publicKey)
-
-	privateDER := x509.MarshalPKCS1PrivateKey(privateKey)
-	privBlock := pem.Block{
-		Type:    "RSA PRIVATE KEY",
-		Headers: nil,
-		Bytes:   privateDER,
-	}
-
-	privatePEM := pem.EncodeToMemory(&privBlock)
-
-	err = os.WriteFile(privateKeyPath, privatePEM, 0600)
-	if err != nil {
-		err = errors.Wrapf(err, "failed to write private key to %s", privateKeyPath)
-		return err
-	}
-
-	err = os.WriteFile(pubKeyPath, pubKeyBytes, 0644)
-	if err != nil {
-		err = errors.Wrapf(err, "failed to write public key to %s", pubKeyPath)
-		return err
-	}
-
-	return err
-}
-
-func generateED25519Key(privateKeyPath string) (err error) {
-	publicKeyPath := fmt.Sprintf("%s.pub", privateKeyPath)
-
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		err = errors.Wrapf(err, "key generation error")
-		return err
-	}
-
-	block := &pem.Block{
-		Type:  "OPENSSH PRIVATE KEY",
-		Bytes: edkey.MarshalED25519PrivateKey(priv),
-	}
-
-	err = os.WriteFile(privateKeyPath, pem.EncodeToMemory(block), 0600)
-	if err != nil {
-		err = errors.Wrapf(err, "failed writing private key to %s", privateKeyPath)
-		return err
-	}
-
-	// public key
-	pubKey, err := ssh.NewPublicKey(pub)
-	if err != nil {
-		err = errors.Wrapf(err, "failed converting public key")
-		return err
-	}
-
-	authKey := ssh.MarshalAuthorizedKey(pubKey)
-
-	err = os.WriteFile(publicKeyPath, authKey, 0644)
-	if err != nil {
-		err = errors.Wrapf(err, "failed writing public key to %s", publicKeyPath)
-		return err
-	}
-
-	return err
-}
-
-func setupTestKey(username string, keyType string, trusted bool) (publicKey string, err error) {
-	privateKeyPath := fmt.Sprintf("%s/%s-%s.key", tmpDir, username, keyType)
-	publicKeyPath := fmt.Sprintf("%s.pub", privateKeyPath)
-
-	switch keyType {
-	case "RSA":
-		err = generateRSAKey(privateKeyPath, 2048)
-		if err != nil {
-			err = errors.Wrapf(err, "Error generating %s key for %s", keyType, username)
-			return publicKey, err
-		}
-
-	case "ED25519":
-		err = generateED25519Key(privateKeyPath)
-		if err != nil {
-			err = errors.Wrapf(err, "Error generating %s key for %s", keyType, username)
-			return publicKey, err
-		}
-
-	default:
-		err = errors.New(fmt.Sprintf("Unsupported key type %q", keyType))
-		return publicKey, err
-	}
-
-	// load the  key into the test-agent
-	sshAdd, err := exec.LookPath("ssh-add")
-	if err != nil {
-		err = errors.Wrapf(err, "ssh-add not found in path")
-		return publicKey, err
-	}
-
-	cmd := exec.Command(sshAdd, privateKeyPath)
-	cmd.Env = []string{
-		fmt.Sprintf("SSH_AGENT_PID=%s", agentPid),
-		fmt.Sprintf("SSH_AUTH_SOCK=%s", agentSock),
-	}
-	err = cmd.Run()
-	if err != nil {
-		err = errors.Wrapf(err, "failed to load private key into ssh agent")
-		return publicKey, err
-	}
-
-	pubkeyBytes, err := os.ReadFile(publicKeyPath)
-	if err != nil {
-		err = errors.Wrapf(err, "failed to read public key file %q", publicKeyPath)
-		return publicKey, err
-	}
-
-	publicKey = string(pubkeyBytes)
-
-	if publicKey == "" {
-		err = errors.New(fmt.Sprintf("empty public key file %s", publicKeyPath))
-		return publicKey, err
-	}
-
-	if trusted {
-		trustedKeys[username] = publicKey
-	}
-
-	return publicKey, err
 }
 
 func TestPubkeyAuth(t *testing.T) {
@@ -325,12 +141,17 @@ func TestPubkeyAuth(t *testing.T) {
 	}
 
 	for _, tc := range inputs {
-		pubkey, err := setupTestKey(tc.username, tc.keyType, tc.trusted)
+		pubkey, err := SetupTestKey(tmpDir, tc.username, tc.keyType, agentPid, agentSock)
 		if err != nil {
 			t.Fatalf("failed setting up %s test key for %s: %s", tc.keyType, tc.username, err)
 		}
 
 		assert.NotEmpty(t, pubkey, "Empty public key!")
+
+		// TODO how do we test for a user that exists, but has a different key than what's listed?
+		if tc.trusted {
+			trustedKeys[tc.username] = pubkey
+		}
 
 		t.Run(tc.username, func(t *testing.T) {
 			address := "http://127.0.0.1"
