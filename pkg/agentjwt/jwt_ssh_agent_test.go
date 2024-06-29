@@ -24,6 +24,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -118,30 +119,35 @@ func TestPubkeyAuth(t *testing.T) {
 		username string
 		keyType  string
 		trusted  bool
+		msg      string
 		expected error
 	}{
 		{
 			"trusted-rsa-user",
 			"RSA",
 			true,
+			"foo",
 			nil,
 		},
 		{
 			"untrusted-rsa-user",
 			"RSA",
 			false,
+			"bar",
 			errors.New("Bad Response: 400"), // This is a kludge.  Fix it.
 		},
 		{
 			"trusted-ed25519-user",
 			"ED25519",
 			true,
+			"baz",
 			nil,
 		},
 		{
 			"trusted-ed25519-user",
 			"ED25519",
 			false,
+			"wip",
 			errors.New("Bad Response: 400"), // This is a kludge.  Fix it.
 		},
 	}
@@ -163,7 +169,9 @@ func TestPubkeyAuth(t *testing.T) {
 			address := "http://127.0.0.1"
 			url := fmt.Sprintf("%s:%d", address, port)
 
-			req, err := http.NewRequest("GET", url, nil)
+			rdr := strings.NewReader(tc.msg)
+
+			req, err := http.NewRequest("POST", url, rdr)
 			if err != nil {
 				err = errors.Wrapf(err, "failed creating request to %s", url)
 				t.Errorf("Error: %s\n", err)
