@@ -34,8 +34,8 @@ import (
 // MAX_TOKEN_DURATION is the maximum duration allowed on a signed token.
 const MAX_TOKEN_DURATION = 300
 
-// SignedJwtToken takes a subject, and a public key string (as provided by ssh-agent or ssh-keygen) and creates a signed JWT Token by asking the ssh-agent politely to sign the token claims.  The token is good for MAX_TOKEN_DURATION seconds.
-func SignedJwtToken(subject string, pubkey string) (token string, err error) {
+// SignedJwtToken takes a subject, and a public key string (as provided by ssh-agent or ssh-keygen) and creates a signed JWT Token by asking the ssh-agent politely to sign the token claims.  The token is good for MAX_TOKEN_DURATION seconds.  The audience of the JWT should be the server you're intending on sending the JWT to.
+func SignedJwtToken(subject string, audience, pubkey string) (token string, err error) {
 	now := time.Now()
 	expiration := now.Add(time.Duration(MAX_TOKEN_DURATION) * time.Second)
 
@@ -54,6 +54,7 @@ func SignedJwtToken(subject string, pubkey string) (token string, err error) {
 		ExpiresAt: jwt.NewNumericDate(expiration),
 		Subject:   subject,
 		Issuer:    subject, // Subject and issuer match, cos that's how this ssh-agent pubkey auth stuff works - you auth yourself by proving you can sign a method with the private key.  It's up to the server to decide if it trusts you - based on your public key being registered.
+		Audience:  jwt.ClaimStrings{audience},
 	}
 
 	// Figure out what algorithm is used, and switch on it
@@ -115,7 +116,7 @@ func SignedJwtToken(subject string, pubkey string) (token string, err error) {
 // If the subject (which came from the client) produces a different pubkey (as if the user set the wrong subject), validation will fail.
 // If the claims are tampered with, the validation will fail
 // Security of this method depends entirely on pubkeyFunc being able to produce a pubkey for the subject that corresponds to a private key held by the requestor.
-func VerifyToken(tokenString string, pubkeyFunc func(subject string) (pubkey string, err error)) (subject string, token *jwt.Token, err error) {
+func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject string) (pubkey string, err error)) (subject string, token *jwt.Token, err error) {
 	subject, token, err = ParseToken(tokenString, pubkeyFunc)
 	if err != nil {
 		err = errors.Wrapf(err, "failed to parse token")
@@ -158,16 +159,37 @@ func VerifyToken(tokenString string, pubkeyFunc func(subject string) (pubkey str
 
 		duration := exp - iat
 
+		aud, ok := claims["aud"].([]interface{})
+		if !ok {
+			err = errors.New("malformed token audience")
+			return subject, token, err
+		}
+
+		found := false
+		// Check token audience against our own url
+		for _, a1 := range audience {
+			for _, a2 := range aud {
+				if a1 == a2.(string) {
+					found = true
+				}
+			}
+		}
+
+		if !found {
+			err = errors.New("Token audience does not include this server")
+			return subject, token, err
+		}
+
 		// Only allow tokens with an agreeably short duration (MAX_TOKEN_DURATION)
 		if duration > MAX_TOKEN_DURATION {
 			err = errors.New(fmt.Sprintf("Token duration too long (max %d seconds)", MAX_TOKEN_DURATION))
-			return "", nil, err
+			return subject, token, err
 		}
 
 		// make sure it's not before when the token was created (paranoid much?)
 		if int64(nbf) < time.Now().Unix() {
 			err = errors.New("Token not yet valid")
-			return "", nil, err
+			return subject, token, err
 		}
 
 		return subject, token, err

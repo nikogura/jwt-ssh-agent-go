@@ -33,6 +33,7 @@ var trustedKeys map[string]string
 var sshAgentBinary string
 var agentPid string
 var agentSock string
+var audience []string
 
 func TestMain(m *testing.M) {
 	setUp()
@@ -64,10 +65,15 @@ func setUp() {
 
 	trustedKeys = make(map[string]string)
 
+	audience = []string{
+		fmt.Sprintf("http://127.0.0.1:%d", port),
+	}
+
 	// Set up the test server
 	server := TestServer{
 		Address:    "127.0.0.1",
 		Port:       port,
+		Audience:   audience,
 		PubkeyFunc: pubkeyForUsername,
 	}
 
@@ -155,10 +161,7 @@ func TestPubkeyAuth(t *testing.T) {
 
 		t.Run(tc.username, func(t *testing.T) {
 			address := "http://127.0.0.1"
-			path := ""
-			url := fmt.Sprintf("%s:%d/%s", address, port, path)
-
-			//fmt.Printf("Testing %s with key type %s\n", tc.username, tc.keyType)
+			url := fmt.Sprintf("%s:%d", address, port)
 
 			req, err := http.NewRequest("GET", url, nil)
 			if err != nil {
@@ -166,7 +169,7 @@ func TestPubkeyAuth(t *testing.T) {
 				t.Errorf("Error: %s\n", err)
 			}
 
-			token, err := SignedJwtToken(tc.username, pubkey)
+			token, err := SignedJwtToken(tc.username, url, pubkey)
 			if err != nil {
 				err = errors.Wrap(err, "failed to create signed token")
 				t.Errorf("Error: %s\n", err)

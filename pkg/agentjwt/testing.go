@@ -32,16 +32,17 @@ import (
 type TestServer struct {
 	Address    string
 	Port       int
+	Audience   []string
 	PubkeyFunc func(username string) (pubkey string, err error)
 }
 
 // RunTestServer runs the test server.
-func (d *TestServer) RunTestServer() (err error) {
-	log.Printf("Running test server on %s port %d.", d.Address, d.Port)
+func (ts *TestServer) RunTestServer() (err error) {
+	log.Printf("Running test server on %s port %d.", ts.Address, ts.Port)
 
-	fullAddress := fmt.Sprintf("%s:%s", d.Address, strconv.Itoa(d.Port))
+	fullAddress := fmt.Sprintf("%s:%s", ts.Address, strconv.Itoa(ts.Port))
 
-	http.HandleFunc("/", d.RootHandler)
+	http.HandleFunc("/", ts.RootHandler)
 
 	err = http.ListenAndServe(fullAddress, nil)
 
@@ -49,11 +50,11 @@ func (d *TestServer) RunTestServer() (err error) {
 }
 
 // RootHandler  The main HTTP handler for TestServer
-func (d *TestServer) RootHandler(w http.ResponseWriter, r *http.Request) {
+func (ts *TestServer) RootHandler(w http.ResponseWriter, r *http.Request) {
 	tokenString := r.Header.Get("Token")
 
 	// Parse the token, which includes setting up it's internals so it can be verified.
-	subject, token, err := VerifyToken(tokenString, d.PubkeyFunc)
+	subject, token, err := VerifyToken(tokenString, ts.Audience, ts.PubkeyFunc)
 	if err != nil {
 		log.Printf("Error: %s", err)
 		w.WriteHeader(http.StatusBadRequest)
