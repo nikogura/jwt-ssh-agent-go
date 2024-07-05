@@ -116,6 +116,7 @@ func pubkeyForUsername(username string) (pubkey string, err error) {
 
 func TestPubkeyAuth(t *testing.T) {
 	inputs := []struct {
+		name     string
 		username string
 		keyType  string
 		trusted  bool
@@ -123,6 +124,7 @@ func TestPubkeyAuth(t *testing.T) {
 		expected error
 	}{
 		{
+			"trusted rsa",
 			"trusted-rsa-user",
 			"RSA",
 			true,
@@ -130,6 +132,7 @@ func TestPubkeyAuth(t *testing.T) {
 			nil,
 		},
 		{
+			"untrusted rsa",
 			"untrusted-rsa-user",
 			"RSA",
 			false,
@@ -137,6 +140,7 @@ func TestPubkeyAuth(t *testing.T) {
 			errors.New("Bad Response: 400"), // This is a kludge.  Fix it.
 		},
 		{
+			"trusted ed25519",
 			"trusted-ed25519-user",
 			"ED25519",
 			true,
@@ -144,7 +148,16 @@ func TestPubkeyAuth(t *testing.T) {
 			nil,
 		},
 		{
+			"good user, untrusted key",
 			"trusted-ed25519-user",
+			"ED25519",
+			false,
+			"baz",
+			errors.New("Bad Response: 400"), // This is a kludge.  Fix it.
+		},
+		{
+			"untrusted ed25519",
+			"untrusted-ed25519-user",
 			"ED25519",
 			false,
 			"wip",
