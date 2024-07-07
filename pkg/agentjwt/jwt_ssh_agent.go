@@ -82,6 +82,7 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 
 	case "ssh-ed25519":
 		signingMethodED25519Agent := &SigningMethodED25519Agent{"EdDSA", crypto.SHA256}
+
 		jwt.RegisterSigningMethod(signingMethodED25519Agent.Alg(), func() jwt.SigningMethod {
 			return signingMethodED25519Agent
 		})
@@ -95,7 +96,7 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 
 	pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubkey))
 	if err != nil {
-		err = errors.Wrap(err, "failed to parse public key")
+		err = errors.Wrap(err, "failed parsing public key")
 		return token, err
 	}
 
@@ -117,12 +118,14 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 // If the claims are tampered with, the validation will fail
 // Security of this method depends entirely on pubkeyFunc being able to produce a pubkey for the subject that corresponds to a private key held by the requestor.
 func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject string) (pubkey string, err error)) (subject string, token *jwt.Token, err error) {
-	subject, token, err = ParseToken(tokenString, pubkeyFunc)
+	// Make a JWT struct from the token string and check it's signature
+	subject, token, err = ParseAndCheckSig(tokenString, pubkeyFunc)
 	if err != nil {
-		err = errors.Wrapf(err, "failed to parse token")
+		err = errors.Wrapf(err, "jwt-ssh-agent-go failed to parse token")
 		return subject, token, err
 	}
 
+	// Now that we've verified, let's check the claims
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if ok {
 		iss := claims["iss"]
@@ -199,7 +202,8 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 	return "", nil, err
 }
 
-func ParseToken(tokenString string, pubkeyFunc func(subject string) (pubkey string, err error)) (subject string, token *jwt.Token, err error) {
+// ParseAndCheckSig Parses the token string in to a token struct and verifies it's signature
+func ParseAndCheckSig(tokenString string, pubkeyFunc func(subject string) (pubkey string, err error)) (subject string, token *jwt.Token, err error) {
 	// Make a token object, part of which is acquiring the appropriate public key with which to verify said token.
 	// Requires closure over 'subject' variable.  Subject is defined here in the parent function but it's set inside the closure below.
 	token, err = jwt.Parse(
@@ -264,7 +268,7 @@ func ParseToken(tokenString string, pubkeyFunc func(subject string) (pubkey stri
 				key.E = exponent
 				key.N = modulus
 
-				// It does, however, work, and that's what counts.
+				// It does, however, work, and that's what counts.  Furthermore, it's what the rsa package appears to do under the surface, so I guess we're stuck either way.
 				return key, err
 
 			case "ssh-ed25519":
