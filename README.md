@@ -97,3 +97,5 @@ How you get them is up to you, but at it's crudest:
 This of course presupposes the remote server is prepared to handle JWT's of this type.  Most will not be able to handle it off the shelf.  
 
 The TestServer struct in this package demonstrates a minimal example of an HTTP server that can be expanded upon to provide this functionality.
+
+Also included is a Gin Middleware example [ssh_agent_middleware.go](pkg/agentjwt/ssh_agent_middleware.go).  Note the registration of the signing method.  If you don't register this packages signing method, you'll try to parse and verify the JWT's with a standard EdDSA signature, which doesn't work.
