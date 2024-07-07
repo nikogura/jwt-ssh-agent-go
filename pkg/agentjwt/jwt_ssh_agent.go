@@ -176,7 +176,7 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 		}
 
 		if !found {
-			err = errors.New("Token audience does not include this server")
+			err = errors.New(fmt.Sprintf("Token audience %q does not include this server", aud))
 			return subject, token, err
 		}
 
