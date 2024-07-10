@@ -189,9 +189,12 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 			return subject, token, err
 		}
 
-		// make sure it's not before when the token was created (paranoid much?)
-		if int64(nbf) < time.Now().Unix() {
-			err = errors.New("Token not yet valid")
+		now := time.Now().Unix()
+
+		// make sure it's not before when the token was created
+		if int64(nbf) > now {
+			fmt.Printf("%v < %v\n", nbf, now)
+			err = errors.New("Token not yet valid, foo")
 			return subject, token, err
 		}
 
