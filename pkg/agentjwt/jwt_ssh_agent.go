@@ -145,8 +145,11 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 		return subject, token, err
 	}
 
+	fmt.Printf("%d keys for %s\n", len(pubkeys), subj)
+
 	// Now loop through the keys, attempting to verify against each key
-	for _, pubkey := range pubkeys {
+	for i, pubkey := range pubkeys {
+		fmt.Printf("Parsing key %d\n", i)
 		// Make a JWT struct from the token string and check it's signature
 		sub, tok, parseErr := ParseAndCheckSig(tokenString, pubkey)
 		// If we don't have an error
@@ -155,6 +158,7 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 			if sub != "" {
 				// and the token is not nil
 				if tok != nil {
+					fmt.Printf("Parse succeeded\n")
 					// Then the token has passed validation.  Set the subject and token, and don't process any more
 					subject = sub
 					token = tok
