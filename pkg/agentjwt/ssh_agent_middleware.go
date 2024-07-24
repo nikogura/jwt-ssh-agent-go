@@ -11,7 +11,7 @@ import (
 
 type SSHAgentTokenValidator struct {
 	Domain     string
-	PubKeyFunc func(subject string) (pubkey string, err error)
+	PubKeyFunc func(subject string) (pubkeys []string, err error)
 }
 
 type Response struct {

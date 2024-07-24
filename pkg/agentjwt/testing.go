@@ -33,7 +33,7 @@ type TestServer struct {
 	Address    string
 	Port       int
 	Audience   []string
-	PubkeyFunc func(username string) (pubkey string, err error)
+	PubkeyFunc func(username string) (pubkeys []string, err error)
 }
 
 // RunTestServer runs the test server.

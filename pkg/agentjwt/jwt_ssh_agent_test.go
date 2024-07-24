@@ -75,7 +75,7 @@ func setUp() {
 		Address:    "127.0.0.1",
 		Port:       port,
 		Audience:   audience,
-		PubkeyFunc: pubkeyForUsername,
+		PubkeyFunc: pubkeysForUsername,
 	}
 
 	// Run it in the background
@@ -109,9 +109,13 @@ func tearDown() {
 	}
 }
 
-func pubkeyForUsername(username string) (pubkey string, err error) {
-	pubkey = trustedKeys[username]
-	return pubkey, err
+func pubkeysForUsername(username string) (pubkeys []string, err error) {
+	pubkeys = make([]string, 0)
+
+	pubkey := trustedKeys[username]
+	pubkeys = append(pubkeys, pubkey)
+
+	return pubkeys, err
 }
 
 func TestPubkeyAuth(t *testing.T) {

@@ -117,15 +117,60 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 // If the subject (which came from the client) produces a different pubkey (as if the user set the wrong subject), validation will fail.
 // If the claims are tampered with, the validation will fail
 // Security of this method depends entirely on pubkeyFunc being able to produce a pubkey for the subject that corresponds to a private key held by the requestor.
-func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject string) (pubkey string, err error)) (subject string, token *jwt.Token, err error) {
-	// Make a JWT struct from the token string and check it's signature
-	subject, token, err = ParseAndCheckSig(tokenString, pubkeyFunc)
+func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject string) (pubkeys []string, err error)) (subject string, token *jwt.Token, err error) {
+
+	// This is tricky.  we need to parse the claim to get the subject, so we know what key to verify it with.
+	// We're not ready, however to verify it yet.
+	parser := jwt.NewParser()
+	unverifiedClaims := jwt.MapClaims{}
+	_, _, err = parser.ParseUnverified(tokenString, unverifiedClaims)
 	if err != nil {
-		err = errors.Wrapf(err, "jwt-ssh-agent-go failed to parse token")
+		err = errors.Wrapf(err, "failed parsing token")
 		return subject, token, err
 	}
 
-	// Now that we've verified, let's check the claims
+	// now we have the subject from the JWT - i.e. the user trying to auth.  We still don't trust it though.
+	subj := unverifiedClaims["sub"].(string)
+
+	// Run the pubkeyFunc with the subject to get the public keys for this user
+	pubkeys, err := pubkeyFunc(subj)
+	if err != nil {
+		err = errors.Wrapf(err, "error looking up public keys for %s", subj)
+		return subject, token, err
+	}
+
+	// If we don't get public keys for this user, auth fails
+	if len(pubkeys) == 0 {
+		err = errors.New(fmt.Sprintf("no keys for user %q", subj))
+		return subject, token, err
+	}
+
+	// Now loop through the keys, attempting to verify against each key
+	for _, pubkey := range pubkeys {
+		// Make a JWT struct from the token string and check it's signature
+		sub, tok, parseErr := ParseAndCheckSig(tokenString, pubkey)
+		// If we don't have an error
+		if parseErr == nil {
+			// and the subject is filled in
+			if sub != "" {
+				// and the token is not nil
+				if tok != nil {
+					// Then the token has passed validation.  Set the subject and token, and don't process any more
+					subject = sub
+					token = tok
+					break
+				}
+			}
+		}
+	}
+
+	// If after the loop abovre we still didn't get a subject and a token, auth has failed.
+	if subject == "" || token == nil {
+		err = errors.New("unknown user, or unverifiable token")
+		return subject, token, err
+	}
+
+	// Now that we've verified, proceed to check the claims
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if ok {
 		iss := claims["iss"]
@@ -206,7 +251,9 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 }
 
 // ParseAndCheckSig Parses the token string in to a token struct and verifies it's signature
-func ParseAndCheckSig(tokenString string, pubkeyFunc func(subject string) (pubkey string, err error)) (subject string, token *jwt.Token, err error) {
+func ParseAndCheckSig(tokenString string, pubkey string) (subject string, token *jwt.Token, err error) {
+	// Run the pubkeyFunc to get the public key for this user
+
 	// Make a token object, part of which is acquiring the appropriate public key with which to verify said token.
 	// Requires closure over 'subject' variable.  Subject is defined here in the parent function but it's set inside the closure below.
 	token, err = jwt.Parse(
@@ -222,13 +269,6 @@ func ParseAndCheckSig(tokenString string, pubkeyFunc func(subject string) (pubke
 				t := reflect.TypeOf(token.Method)
 				err = errors.New(fmt.Sprintf("Unsupported signing method: %s", t.String()))
 
-				return token, err
-			}
-
-			// Run the pubkeyFunc to get the public key for this user
-			pubkey, err := pubkeyFunc(subject)
-			if err != nil {
-				err = errors.Wrapf(err, "failed to produce public key for %s", subject)
 				return token, err
 			}
 
