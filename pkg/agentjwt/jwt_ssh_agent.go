@@ -31,6 +31,8 @@ import (
 	"time"
 )
 
+var Verbose bool
+
 // MAX_TOKEN_DURATION is the maximum duration allowed on a signed token.
 const MAX_TOKEN_DURATION = 300
 
@@ -145,20 +147,34 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 		return subject, token, err
 	}
 
-	fmt.Printf("%d keys for %s\n", len(pubkeys), subj)
+	if Verbose {
+		fmt.Printf("Authenticating %s\n", subj)
+		fmt.Printf("JWT String: %s\n", tokenString)
+		fmt.Printf("%s has %d keys\n", subj, len(pubkeys))
+	}
 
 	// Now loop through the keys, attempting to verify against each key
 	for i, pubkey := range pubkeys {
-		fmt.Printf("Parsing key %d\n", i)
+		if Verbose {
+			fmt.Printf("Parsing key %d for subject %s\n", i, subj)
+		}
 		// Make a JWT struct from the token string and check it's signature
 		sub, tok, parseErr := ParseAndCheckSig(tokenString, pubkey)
+		if parseErr != nil {
+			if Verbose {
+				fmt.Printf("Parse Error on key %d: %s\n", i, parseErr)
+			}
+		}
+
 		// If we don't have an error
 		if parseErr == nil {
 			// and the subject is filled in
 			if sub != "" {
 				// and the token is not nil
 				if tok != nil {
-					fmt.Printf("Parse succeeded\n")
+					if Verbose {
+						fmt.Printf("Parse succeeded\n")
+					}
 					// Then the token has passed validation.  Set the subject and token, and don't process any more
 					subject = sub
 					token = tok
@@ -168,9 +184,9 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 		}
 	}
 
-	// If after the loop abovre we still didn't get a subject and a token, auth has failed.
+	// If after the loop above we still didn't get a subject and a token, auth has failed.
 	if subject == "" || token == nil {
-		err = errors.New("unknown user, or unverifiable token")
+		err = errors.New(fmt.Sprintf("Token verification failed for %s", subj))
 		return subject, token, err
 	}
 
@@ -250,7 +266,7 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 		return subject, token, err
 	}
 
-	err = errors.New("unparsable token")
+	err = errors.New("token validation failed")
 	return "", nil, err
 }
 
