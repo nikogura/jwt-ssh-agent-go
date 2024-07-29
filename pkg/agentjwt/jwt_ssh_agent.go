@@ -32,14 +32,25 @@ import (
 )
 
 var Verbose bool
+var IssueSecondsInPast int
 
 // MAX_TOKEN_DURATION is the maximum duration allowed on a signed token.
 const MAX_TOKEN_DURATION = 300
 
 // SignedJwtToken takes a subject, and a public key string (as provided by ssh-agent or ssh-keygen) and creates a signed JWT Token by asking the ssh-agent politely to sign the token claims.  The token is good for MAX_TOKEN_DURATION seconds.  The audience of the JWT should be the server you're intending on sending the JWT to.
 func SignedJwtToken(subject string, audience, pubkey string) (token string, err error) {
-	now := time.Now()
-	expiration := now.Add(time.Duration(MAX_TOKEN_DURATION) * time.Second)
+
+	var issueTs time.Time
+
+	if IssueSecondsInPast > 0 {
+
+		issueTs = time.Now().Add(-(time.Duration(int64(IssueSecondsInPast)) * time.Second))
+
+	} else {
+		issueTs = time.Now()
+	}
+
+	expiration := issueTs.Add(time.Duration(MAX_TOKEN_DURATION) * time.Second)
 
 	rBytes := make([]byte, 32)
 	if _, err := rand.Read(rBytes); err != nil {
@@ -51,8 +62,8 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 
 	claims := &jwt.RegisteredClaims{
 		ID:        id,
-		IssuedAt:  jwt.NewNumericDate(now),
-		NotBefore: jwt.NewNumericDate(now),
+		IssuedAt:  jwt.NewNumericDate(issueTs),
+		NotBefore: jwt.NewNumericDate(issueTs),
 		ExpiresAt: jwt.NewNumericDate(expiration),
 		Subject:   subject,
 		Issuer:    subject, // Subject and issuer match, cos that's how this ssh-agent pubkey auth stuff works - you auth yourself by proving you can sign a method with the private key.  It's up to the server to decide if it trusts you - based on your public key being registered.

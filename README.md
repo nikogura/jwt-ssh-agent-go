@@ -99,3 +99,19 @@ This of course presupposes the remote server is prepared to handle JWT's of this
 The TestServer struct in this package demonstrates a minimal example of an HTTP server that can be expanded upon to provide this functionality.
 
 Also included is a Gin Middleware example [ssh_agent_middleware.go](pkg/agentjwt/ssh_agent_middleware.go).  Note the registration of the signing method.  If you don't register this packages signing method, you'll try to parse and verify the JWT's with a standard EdDSA signature, which doesn't work.
+
+## Options
+
+### Verbose
+
+If you need verbose output, you can set the Verbose flag on the agentjwt project to true and it will spit auth errors to STDOUT.  Crude, I admit, but effective.  
+
+    func init() {
+        agentjwt.Verbose = true
+    }
+
+## IssueSecondsInPast
+
+At base, this package will make JWT's that are valid from time.Now().  If your clients and server are not very tightly synced in terms of time, you will encounter errors like `invalid token or user not found: Token not yet valid`.  
+
+This can be countered by setting `agentjwtIssueSecondsInPast` to a non zero value.  Setting it to say "5" means that JWT's issued by the client are valid from 5 seconds before they were create up to their default of 300 seconds.
