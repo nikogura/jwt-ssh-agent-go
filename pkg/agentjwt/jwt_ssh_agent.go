@@ -166,7 +166,7 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 	if logger != nil {
 		logger.Debug(fmt.Sprintf("Authenticating %s\n", subj))
 		logger.Debug(fmt.Sprintf("JWT String: %s\n", tokenString))
-		logger.Debug(fmt.Sprintf("%s has %d keys\n", subj, len(pubkeys)))
+		logger.Debug(fmt.Sprintf("User %s has %d keys\n", subj, len(pubkeys)))
 	}
 
 	// Now loop through the keys, attempting to verify against each key
@@ -175,7 +175,7 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 			logger.Debug(fmt.Sprintf("Parsing key %d for subject %s\n", i, subj))
 		}
 		// Make a JWT struct from the token string and check it's signature
-		sub, tok, parseErr := ParseAndCheckSig(tokenString, pubkey)
+		sub, tok, parseErr := ParseAndCheckSig(tokenString, pubkey, logger)
 		if parseErr != nil {
 			if logger != nil {
 				logger.Debug(fmt.Sprintf("Parse Error on key %d: %s\n", i, parseErr))
@@ -202,7 +202,7 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 
 	// If after the loop above we still didn't get a subject and a token, auth has failed.
 	if subject == "" || token == nil {
-		err = errors.New(fmt.Sprintf("Token verification failed for %s", subj))
+		err = errors.New(fmt.Sprintf("token parse and signature check failed for all %d keys for user %q", len(pubkeys), subj))
 		return subject, token, err
 	}
 
@@ -287,7 +287,7 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 }
 
 // ParseAndCheckSig Parses the token string in to a token struct and verifies it's signature
-func ParseAndCheckSig(tokenString string, pubkey string) (subject string, token *jwt.Token, err error) {
+func ParseAndCheckSig(tokenString string, pubkey string, logger Logger) (subject string, token *jwt.Token, err error) {
 	// Run the pubkeyFunc to get the public key for this user
 
 	// Make a token object, part of which is acquiring the appropriate public key with which to verify said token.
@@ -311,6 +311,9 @@ func ParseAndCheckSig(tokenString string, pubkey string) (subject string, token 
 			// If we don't get a public key for this user, the user isn't allowed in.
 			if pubkey == "" {
 				err = errors.New(fmt.Sprintf("unknown user %q", subject))
+				if logger != nil {
+					logger.Debug(fmt.Sprintf("Unknown user %q", subject))
+				}
 				return token, err
 			}
 
@@ -324,6 +327,9 @@ func ParseAndCheckSig(tokenString string, pubkey string) (subject string, token 
 			}
 
 			algo := parts[0]
+			if logger != nil {
+				logger.Debug(fmt.Sprintf("Algorithm is  %q", algo))
+			}
 
 			switch algo {
 			case "ssh-rsa":
@@ -331,6 +337,9 @@ func ParseAndCheckSig(tokenString string, pubkey string) (subject string, token 
 				pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubkey))
 				if err != nil {
 					err = errors.Wrapf(err, "failed parsing %s public key", algo)
+					if logger != nil {
+						logger.Debug(fmt.Sprintf("Failed parsing %s public key", algo))
+					}
 					return key, err
 				}
 
@@ -354,6 +363,9 @@ func ParseAndCheckSig(tokenString string, pubkey string) (subject string, token 
 				pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubkey))
 				if err != nil {
 					err = errors.Wrapf(err, "failed parsing %s public key", algo)
+					if logger != nil {
+						logger.Debug(fmt.Sprintf("Failed parsing %s public key", algo))
+					}
 					return nil, err
 				}
 
@@ -362,6 +374,9 @@ func ParseAndCheckSig(tokenString string, pubkey string) (subject string, token 
 				return key, err
 			default:
 				err = errors.New(fmt.Sprintf("unsupported key type %q", algo))
+				if logger != nil {
+					logger.Debug(fmt.Sprintf("Fnsupported key type %q", algo))
+				}
 				return nil, err
 			}
 		},
