@@ -54,7 +54,7 @@ func (ts *TestServer) RootHandler(w http.ResponseWriter, r *http.Request) {
 	tokenString := r.Header.Get("Token")
 
 	// Parse the token, which includes setting up it's internals so it can be verified.
-	subject, token, err := VerifyToken(tokenString, ts.Audience, ts.PubkeyFunc)
+	subject, token, err := VerifyToken(tokenString, ts.Audience, ts.PubkeyFunc, TestLogger{})
 	if err != nil {
 		log.Printf("Error: %s", err)
 		w.WriteHeader(http.StatusBadRequest)
@@ -190,4 +190,11 @@ func SetupTestKey(workDir string, username string, keyType string, agentPid stri
 	}
 
 	return publicKey, err
+}
+
+type TestLogger struct {
+}
+
+func (t TestLogger) Debug(msg string, args ...interface{}) {
+	fmt.Printf("%s", msg)
 }

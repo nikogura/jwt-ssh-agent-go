@@ -95,8 +95,6 @@ func setUp() {
 	_ = os.Setenv("SSH_AGENT_PID", agentPid)
 	_ = os.Setenv("SSH_AUTH_SOCK", agentSock)
 
-	Verbose = true
-
 }
 
 func tearDown() {

@@ -36,7 +36,7 @@ func (v SSHAgentTokenValidator) ValidateAndPopulateToken(ctx *gin.Context) {
 		return signingMethodED25519Agent
 	})
 
-	sub, token, err := VerifyToken(tokenString, audience, v.PubKeyFunc)
+	sub, token, err := VerifyToken(tokenString, audience, v.PubKeyFunc, nil)
 	if err != nil {
 		ctx.AbortWithError(http.StatusUnauthorized, fmt.Errorf("invalid token or user not found: %s", err))
 		return

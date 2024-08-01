@@ -31,11 +31,16 @@ import (
 	"time"
 )
 
-var Verbose bool
 var IssueSecondsInPast int
 
 // MAX_TOKEN_DURATION is the maximum duration allowed on a signed token.
 const MAX_TOKEN_DURATION = 300
+
+// Logger Really simple logger interface that all real loggers should be able to satisfy
+type Logger interface {
+	// Emit a message and key/value pairs at the DEBUG level
+	Debug(msg string, args ...interface{})
+}
 
 // SignedJwtToken takes a subject, and a public key string (as provided by ssh-agent or ssh-keygen) and creates a signed JWT Token by asking the ssh-agent politely to sign the token claims.  The token is good for MAX_TOKEN_DURATION seconds.  The audience of the JWT should be the server you're intending on sending the JWT to.
 func SignedJwtToken(subject string, audience, pubkey string) (token string, err error) {
@@ -130,7 +135,7 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 // If the subject (which came from the client) produces a different pubkey (as if the user set the wrong subject), validation will fail.
 // If the claims are tampered with, the validation will fail
 // Security of this method depends entirely on pubkeyFunc being able to produce a pubkey for the subject that corresponds to a private key held by the requestor.
-func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject string) (pubkeys []string, err error)) (subject string, token *jwt.Token, err error) {
+func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject string) (pubkeys []string, err error), logger Logger) (subject string, token *jwt.Token, err error) {
 
 	// This is tricky.  we need to parse the claim to get the subject, so we know what key to verify it with.
 	// We're not ready, however to verify it yet.
@@ -158,22 +163,22 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 		return subject, token, err
 	}
 
-	if Verbose {
-		fmt.Printf("Authenticating %s\n", subj)
-		fmt.Printf("JWT String: %s\n", tokenString)
-		fmt.Printf("%s has %d keys\n", subj, len(pubkeys))
+	if logger != nil {
+		logger.Debug(fmt.Sprintf("Authenticating %s\n", subj))
+		logger.Debug(fmt.Sprintf("JWT String: %s\n", tokenString))
+		logger.Debug(fmt.Sprintf("%s has %d keys\n", subj, len(pubkeys)))
 	}
 
 	// Now loop through the keys, attempting to verify against each key
 	for i, pubkey := range pubkeys {
-		if Verbose {
-			fmt.Printf("Parsing key %d for subject %s\n", i, subj)
+		if logger != nil {
+			logger.Debug(fmt.Sprintf("Parsing key %d for subject %s\n", i, subj))
 		}
 		// Make a JWT struct from the token string and check it's signature
 		sub, tok, parseErr := ParseAndCheckSig(tokenString, pubkey)
 		if parseErr != nil {
-			if Verbose {
-				fmt.Printf("Parse Error on key %d: %s\n", i, parseErr)
+			if logger != nil {
+				logger.Debug(fmt.Sprintf("Parse Error on key %d: %s\n", i, parseErr))
 			}
 		}
 
@@ -183,8 +188,8 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 			if sub != "" {
 				// and the token is not nil
 				if tok != nil {
-					if Verbose {
-						fmt.Printf("Parse succeeded\n")
+					if logger != nil {
+						logger.Debug("Parse succeeded")
 					}
 					// Then the token has passed validation.  Set the subject and token, and don't process any more
 					subject = sub
