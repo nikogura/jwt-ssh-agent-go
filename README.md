@@ -100,6 +100,23 @@ The TestServer struct in this package demonstrates a minimal example of an HTTP 
 
 Also included is a Gin Middleware example [ssh_agent_middleware.go](pkg/agentjwt/ssh_agent_middleware.go).  Note the registration of the signing method.  If you don't register this packages signing method, you'll try to parse and verify the JWT's with a standard EdDSA signature, which doesn't work.
 
+## Testing
+
+There is a CLI client program included in this repository largely for testing and example purposes.
+
+You might find the following bash function useful:
+
+    function decjwt {
+      jq -R 'split(".") |.[0:2] | map(@base64d) | map(fromjson)'
+    }
+
+It'll take a JWT and parse the header and body so you can see what you're doing.
+
+Use it like this: 
+  
+    go build && ./jwt-ssh-agent-go token | decjwt
+
+
 ## Options
 
 ### Verbose
