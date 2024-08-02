@@ -177,6 +177,8 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 		// Make a JWT struct from the token string and check it's signature
 		sub, tok, parseErr := ParseAndCheckSig(tokenString, pubkey, logger)
 		if parseErr != nil {
+			// Set the err to be the parse error, so we return the why to the caller.
+			err = parseErr
 			if logger != nil {
 				logger.Debug(fmt.Sprintf("Parse Error on key %d: %s\n", i, parseErr))
 			}
@@ -194,6 +196,8 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 					// Then the token has passed validation.  Set the subject and token, and don't process any more
 					subject = sub
 					token = tok
+					// reset the outer err which could have been set on a previous iteration
+					err = nil
 					break
 				}
 			}
@@ -202,7 +206,6 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 
 	// If after the loop above we still didn't get a subject and a token, auth has failed.
 	if subject == "" || token == nil {
-		err = errors.New(fmt.Sprintf("token parse and signature check failed for all %d keys for user %q", len(pubkeys), subj))
 		return subject, token, err
 	}
 
@@ -298,15 +301,15 @@ func ParseAndCheckSig(tokenString string, pubkey string, logger Logger) (subject
 			// this is where subject gets set.
 			subject = token.Claims.(jwt.MapClaims)["sub"].(string)
 
-			switch reflect.TypeOf(token.Method).String() {
-			case "*agentjwt.SigningMethodRSAAgent":
-			case "*agentjwt.SigningMethodED25519Agent":
-			default:
-				t := reflect.TypeOf(token.Method)
-				err = errors.New(fmt.Sprintf("Unsupported signing method: %s", t.String()))
-
-				return token, err
-			}
+			//switch reflect.TypeOf(token.Method).String() {
+			//case "*agentjwt.SigningMethodRSAAgent":
+			//case "*agentjwt.SigningMethodED25519Agent":
+			//default:
+			//	t := reflect.TypeOf(token.Method)
+			//	err = errors.New(fmt.Sprintf("Unsupported signing method: %s", t.String()))
+			//
+			//	return token, err
+			//}
 
 			// If we don't get a public key for this user, the user isn't allowed in.
 			if pubkey == "" {
@@ -380,6 +383,10 @@ func ParseAndCheckSig(tokenString string, pubkey string, logger Logger) (subject
 				return nil, err
 			}
 		},
+		jwt.WithValidMethods([]string{
+			"RS256",
+			"EdDSA",
+		}),
 	)
 
 	return subject, token, err
