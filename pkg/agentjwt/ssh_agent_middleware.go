@@ -4,7 +4,7 @@ import (
 	"crypto"
 	"fmt"
 	"github.com/gin-gonic/gin"
-	jwt "github.com/golang-jwt/jwt/v4"
+	jwtv4 "github.com/golang-jwt/jwt/v4"
 	"net/http"
 	"strings"
 )
@@ -16,7 +16,7 @@ type SSHAgentTokenValidator struct {
 
 type Response struct {
 	StatusCode int
-	JWT        jwt.Token
+	JWT        jwtv4.Token
 }
 
 func (v SSHAgentTokenValidator) ValidateAndPopulateToken(ctx *gin.Context) {
@@ -32,7 +32,7 @@ func (v SSHAgentTokenValidator) ValidateAndPopulateToken(ctx *gin.Context) {
 	// Register the ssh-agent signing method, or we won't be able to verify the signed tokens
 	signingMethodED25519Agent := &SigningMethodED25519Agent{"EdDSA", crypto.SHA256}
 
-	jwt.RegisterSigningMethod(signingMethodED25519Agent.Alg(), func() jwt.SigningMethod {
+	jwtv4.RegisterSigningMethod(signingMethodED25519Agent.Alg(), func() jwtv4.SigningMethod {
 		return signingMethodED25519Agent
 	})
 

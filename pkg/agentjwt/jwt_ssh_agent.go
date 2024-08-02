@@ -135,6 +135,17 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 // If the subject (which came from the client) produces a different pubkey (as if the user set the wrong subject), validation will fail.
 // If the claims are tampered with, the validation will fail
 // Security of this method depends entirely on pubkeyFunc being able to produce a pubkey for the subject that corresponds to a private key held by the requestor.
+// Note: The signing mechanism must be registered with the JWT package before it can verify JWT's of this type:
+//
+//  You have to call something like this:
+// signingMethodED25519Agent := &SigningMethodED25519Agent{"EdDSA", crypto.SHA256}
+//
+// jwtv4.RegisterSigningMethod(signingMethodED25519Agent.Alg(), func() jwtv4.SigningMethod {
+//	  return signingMethodED25519Agent
+// })
+//
+// Before trying to call VerifyToken() or your JWT's will fail to parse - no matter how valid they are.
+
 func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject string) (pubkeys []string, err error), logger Logger) (subject string, token *jwt.Token, err error) {
 
 	// This is tricky.  we need to parse the claim to get the subject, so we know what key to verify it with.

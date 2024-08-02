@@ -100,6 +100,23 @@ The TestServer struct in this package demonstrates a minimal example of an HTTP 
 
 Also included is a Gin Middleware example [ssh_agent_middleware.go](pkg/agentjwt/ssh_agent_middleware.go).  Note the registration of the signing method.  If you don't register this packages signing method, you'll try to parse and verify the JWT's with a standard EdDSA signature, which doesn't work.
 
+The crux of using this server side is this:
+
+    // Register the ssh-agent signing method, or we won't be able to verify the signed tokens
+    signingMethodED25519Agent := &SigningMethodED25519Agent{"EdDSA", crypto.SHA256}
+
+    jwtv4.RegisterSigningMethod(signingMethodED25519Agent.Alg(), func() jwtv4.SigningMethod {
+      return signingMethodED25519Agent
+    })
+
+    sub, token, err := VerifyToken(tokenString, audience, v.PubKeyFunc, nil)
+    if err != nil {
+      ctx.AbortWithError(http.StatusUnauthorized, fmt.Errorf("invalid token or user not found: %s", err))
+      return
+    }
+
+You *must* register the signing method with the JWT package before trying to call VerifyToken() or your JWT's will fail to parse - no matter how valid they are.
+
 ## Testing
 
 There is a CLI client program included in this repository largely for testing and example purposes.
