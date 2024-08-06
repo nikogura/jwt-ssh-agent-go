@@ -3,15 +3,19 @@ package agentjwt
 import (
 	"crypto"
 	"fmt"
+	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
 	jwtv4 "github.com/golang-jwt/jwt/v4"
+	"github.com/jellydator/ttlcache/v3"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type SSHAgentTokenValidator struct {
 	Domain     string
 	PubKeyFunc func(subject string) (pubkeys []string, err error)
+	Cache      *ttlcache.Cache[string, int]
 }
 
 type Response struct {
@@ -41,6 +45,35 @@ func (v SSHAgentTokenValidator) ValidateAndPopulateToken(ctx *gin.Context) {
 		ctx.AbortWithError(http.StatusUnauthorized, fmt.Errorf("invalid token or user not found: %s", err))
 		return
 	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		ctx.AbortWithError(http.StatusBadRequest, fmt.Errorf("unparsable token claims"))
+		return
+	}
+
+	jti, ok := claims["jti"].(string)
+	if !ok {
+		ctx.AbortWithError(http.StatusBadRequest, fmt.Errorf("unparsable jti claim"))
+		return
+	}
+
+	expires, ok := claims["exp"].(float64)
+	if !ok {
+		ctx.AbortWithError(http.StatusBadRequest, fmt.Errorf("unparsable exp claim"))
+		return
+	}
+
+	cacheItem := v.Cache.Get(jti)
+
+	if cacheItem != nil {
+		ctx.AbortWithError(http.StatusBadRequest, fmt.Errorf("token already used"))
+		return
+	}
+
+	tExpire := time.Unix(int64(expires), 0).Sub(time.Now())
+
+	v.Cache.Set(jti, 1, tExpire)
 
 	ctx.Set("username", sub)
 	ctx.Set("token", token)
