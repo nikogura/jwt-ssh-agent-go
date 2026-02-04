@@ -28,13 +28,16 @@ import (
 	"testing"
 )
 
-var tmpDir string
-var port int
-var trustedKeys map[string]string
-var sshAgentBinary string
-var agentPid string
-var agentSock string
-var audience []string
+//nolint:gochecknoglobals // Test fixtures
+var (
+	tmpDir         string
+	port           int
+	trustedKeys    map[string]string
+	sshAgentBinary string
+	agentPid       string
+	agentSock      string
+	audience       []string
+)
 
 func TestMain(m *testing.M) {
 	setUp()
@@ -98,7 +101,8 @@ func setUp() {
 }
 
 func tearDown() {
-	if _, err := os.Stat(tmpDir); !os.IsNotExist(err) {
+	_, statErr := os.Stat(tmpDir)
+	if !os.IsNotExist(statErr) {
 		_ = os.Remove(tmpDir)
 	}
 
@@ -118,6 +122,7 @@ func pubkeysForUsername(username string) (pubkeys []string, err error) {
 	return pubkeys, err
 }
 
+//nolint:gocognit // Complex test with multiple scenarios
 func TestPubkeyAuth(t *testing.T) {
 	inputs := []struct {
 		name     string
@@ -188,16 +193,16 @@ func TestPubkeyAuth(t *testing.T) {
 
 			rdr := strings.NewReader(tc.msg)
 
-			req, err := http.NewRequest("POST", url, rdr)
-			if err != nil {
-				err = errors.Wrapf(err, "failed creating request to %s", url)
-				t.Errorf("Error: %s\n", err)
+			req, reqErr := http.NewRequest(http.MethodPost, url, rdr)
+			if reqErr != nil {
+				reqErr = errors.Wrapf(reqErr, "failed creating request to %s", url)
+				t.Errorf("Error: %s\n", reqErr)
 			}
 
-			token, err := SignedJwtToken(tc.username, url, pubkey)
-			if err != nil {
-				err = errors.Wrap(err, "failed to create signed token")
-				t.Errorf("Error: %s\n", err)
+			token, tokenErr := SignedJwtToken(tc.username, url, pubkey)
+			if tokenErr != nil {
+				tokenErr = errors.Wrap(tokenErr, "failed to create signed token")
+				t.Errorf("Error: %s\n", tokenErr)
 			}
 
 			req.Header.Set("Token", token)
@@ -205,23 +210,24 @@ func TestPubkeyAuth(t *testing.T) {
 			// Make the request
 			client := &http.Client{}
 
-			resp, err := client.Do(req)
-			if err != nil {
-				err = errors.Wrap(err, "failed making http request")
-				t.Errorf("Error: %s", err)
+			resp, respErr := client.Do(req)
+			if respErr != nil {
+				respErr = errors.Wrap(respErr, "failed making http request")
+				t.Errorf("Error: %s", respErr)
 			}
 
-			if resp.StatusCode != 200 {
-				err = errors.New(fmt.Sprintf("Bad Response: %d", resp.StatusCode))
+			var testErr error
+			if resp.StatusCode != http.StatusOK {
+				testErr = fmt.Errorf("Bad Response: %d", resp.StatusCode)
 			}
 
 			if tc.expected == nil {
-				assert.Equal(t, tc.expected, err, "Error authenticating with %s key for %s", tc.keyType, tc.username)
+				assert.Equal(t, tc.expected, testErr, "Error authenticating with %s key for %s", tc.keyType, tc.username)
 			} else {
-				if err == nil {
+				if testErr == nil {
 					t.Fail()
 				} else {
-					assert.Equal(t, tc.expected.Error(), err.Error(), "Unexpected Error")
+					assert.Equal(t, tc.expected.Error(), testErr.Error(), "Unexpected Error")
 				}
 			}
 		})

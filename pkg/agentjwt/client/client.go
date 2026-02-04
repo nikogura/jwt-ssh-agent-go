@@ -1,19 +1,23 @@
 package client
 
 import (
+	"context"
 	"fmt"
-	"github.com/nikogura/jwt-ssh-agent-go/pkg/agentjwt"
-	"github.com/pkg/errors"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/nikogura/jwt-ssh-agent-go/pkg/agentjwt"
+	"github.com/pkg/errors"
 )
 
-const DEFAULT_TIMEOUT_SECONDS = 10
+// DefaultTimeoutSeconds is the default timeout for HTTP requests.
+const DefaultTimeoutSeconds = 10
 
+// ClientConfig holds configuration for the JWT SSH Agent client.
 type ClientConfig struct {
 	Username   string
 	PubKey     string
@@ -21,8 +25,9 @@ type ClientConfig struct {
 	Timeout    int
 }
 
+// Client is a JWT SSH Agent HTTP client.
 type Client struct {
-	HttpClient *http.Client
+	HTTPClient *http.Client
 	Config     *ClientConfig
 }
 
@@ -32,7 +37,8 @@ func NewClient(cfg *ClientConfig) (client *Client, err error) {
 		// And there's a pubkeyfile
 		if cfg.PubKeyFile != "" {
 			// read it and populate the cfg
-			pubKey, err := LoadPubKey(cfg.PubKeyFile)
+			var pubKey string
+			pubKey, err = LoadPubKey(cfg.PubKeyFile)
 			if err != nil {
 				err = errors.Wrapf(err, "failed to load pubkey from file %s", cfg.PubKeyFile)
 				return client, err
@@ -45,11 +51,11 @@ func NewClient(cfg *ClientConfig) (client *Client, err error) {
 	// If there's not a timeout
 	if cfg.Timeout == 0 {
 		// Set it to the default
-		cfg.Timeout = DEFAULT_TIMEOUT_SECONDS
+		cfg.Timeout = DefaultTimeoutSeconds
 	}
 
 	client = &Client{
-		HttpClient: &http.Client{
+		HTTPClient: &http.Client{
 			Timeout: time.Duration(int64(cfg.Timeout)) * time.Second,
 		},
 		Config: cfg,
@@ -59,7 +65,8 @@ func NewClient(cfg *ClientConfig) (client *Client, err error) {
 }
 
 func (c *Client) MakeToken(url string) (token string, err error) {
-	domain, err := ExtractDomain(url)
+	var domain string
+	domain, err = ExtractDomain(url)
 	if err != nil {
 		err = errors.Wrapf(err, "unparsable url")
 		return token, err
@@ -79,7 +86,8 @@ func (c *Client) Send(url string, token string) (resp *http.Response, err error)
 	method := "POST"
 
 	// Make Request
-	req, err := http.NewRequest(method, url, nil)
+	var req *http.Request
+	req, err = http.NewRequestWithContext(context.Background(), method, url, nil)
 	if err != nil {
 		err = errors.Wrapf(err, "failed creating %s request to %s", method, url)
 		return resp, err
@@ -88,14 +96,14 @@ func (c *Client) Send(url string, token string) (resp *http.Response, err error)
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 
 	// Send command
-	resp, err = c.HttpClient.Do(req)
+	resp, err = c.HTTPClient.Do(req)
 	if err != nil {
 		err = errors.Wrapf(err, "failed executing %s request to %s", method, url)
 		return resp, err
 	}
 
 	// parse response
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		err = errors.New(fmt.Sprintf("error returned executing %s request to %s", method, url))
 	}
 
@@ -103,7 +111,8 @@ func (c *Client) Send(url string, token string) (resp *http.Response, err error)
 }
 
 func LoadPubKey(path string) (key string, err error) {
-	keyBytes, err := os.ReadFile(path)
+	var keyBytes []byte
+	keyBytes, err = os.ReadFile(path)
 	if err != nil {
 		err = errors.Wrapf(err, "failed reading %s", path)
 		return key, err

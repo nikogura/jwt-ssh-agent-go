@@ -12,7 +12,9 @@ import (
 	"os/user"
 )
 
-// tokenCmd represents the token command
+// tokenCmd represents the token command.
+//
+//nolint:gochecknoglobals // Cobra boilerplate
 var tokenCmd = &cobra.Command{
 	Use:   "token",
 	Short: "Make a signed JWT.",
@@ -59,7 +61,7 @@ Make a signed JWT.
 	},
 }
 
+//nolint:gochecknoinits // Cobra boilerplate
 func init() {
 	rootCmd.AddCommand(tokenCmd)
-
 }

@@ -28,7 +28,7 @@ import (
 	"strings"
 )
 
-// TestServer an HTTP server demostrating JWT RSA Auth
+// TestServer is an HTTP server demonstrating JWT RSA Auth.
 type TestServer struct {
 	Address    string
 	Port       int
@@ -49,7 +49,7 @@ func (ts *TestServer) RunTestServer() (err error) {
 	return err
 }
 
-// RootHandler  The main HTTP handler for TestServer
+// RootHandler is the main HTTP handler for TestServer.
 func (ts *TestServer) RootHandler(w http.ResponseWriter, r *http.Request) {
 	tokenString := r.Header.Get("Token")
 
@@ -69,19 +69,23 @@ func (ts *TestServer) RootHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Subject %s successfully authenticated", subject)
 }
 
-// Spins up an SSH Agent for testing
+// StartTestAgent spins up an SSH Agent for testing.
+//
+//nolint:noctx // Test helper, context not needed
 func StartTestAgent() (binary, pid string, sock string, err error) {
 	// find the ssh-agent binary
-	ssh, err := exec.LookPath("ssh-agent")
+	var sshPath string
+	sshPath, err = exec.LookPath("ssh-agent")
 	if err != nil {
 		err = errors.Wrapf(err, "ssh-agent not found in path")
 		return binary, pid, sock, err
 	}
 
-	binary = ssh
+	binary = sshPath
 
 	// spin up an agent
-	out, err := exec.Command(binary).Output()
+	var out []byte
+	out, err = exec.Command(binary).Output()
 	if err != nil {
 		err = errors.Wrapf(err, "failed starting ssh-agent")
 		return binary, pid, sock, err
@@ -95,11 +99,11 @@ func StartTestAgent() (binary, pid string, sock string, err error) {
 
 	for _, p := range parts {
 		if pidrx.MatchString(p) {
-			parts := strings.Split(p, "=")
-			pid = parts[1]
+			pidParts := strings.Split(p, "=")
+			pid = pidParts[1]
 		} else if sockrx.MatchString(p) {
-			parts := strings.Split(p, "=")
-			sock = parts[1]
+			sockParts := strings.Split(p, "=")
+			sock = sockParts[1]
 		}
 	}
 
@@ -118,6 +122,7 @@ func StartTestAgent() (binary, pid string, sock string, err error) {
 	return binary, pid, sock, err
 }
 
+//nolint:noctx // Test helper, context not needed
 func KillTestAgent(binary string, pid string) (err error) {
 	// Teardown the agent ssh-agent -k SSH_AGENT_PID
 	cmd := exec.Command(binary, "-k")
@@ -133,7 +138,9 @@ func KillTestAgent(binary string, pid string) (err error) {
 	return err
 }
 
-// Creates Test Keys, and loads them into your test SSH Agent
+// SetupTestKey creates Test Keys, and loads them into your test SSH Agent.
+//
+//nolint:noctx // Test helper, context not needed
 func SetupTestKey(workDir string, username string, keyType string, agentPid string, agentSock string) (publicKey string, err error) {
 	privateKeyPath := fmt.Sprintf("%s/%s-%s.key", workDir, username, keyType)
 	publicKeyPath := fmt.Sprintf("%s.pub", privateKeyPath)
@@ -159,7 +166,8 @@ func SetupTestKey(workDir string, username string, keyType string, agentPid stri
 	}
 
 	// load the  key into the test-agent
-	sshAdd, err := exec.LookPath("ssh-add")
+	var sshAdd string
+	sshAdd, err = exec.LookPath("ssh-add")
 	if err != nil {
 		err = errors.Wrapf(err, "ssh-add not found in path")
 		return publicKey, err
@@ -176,7 +184,8 @@ func SetupTestKey(workDir string, username string, keyType string, agentPid stri
 		return publicKey, err
 	}
 
-	pubkeyBytes, err := os.ReadFile(publicKeyPath)
+	var pubkeyBytes []byte
+	pubkeyBytes, err = os.ReadFile(publicKeyPath)
 	if err != nil {
 		err = errors.Wrapf(err, "failed to read public key file %q", publicKeyPath)
 		return publicKey, err

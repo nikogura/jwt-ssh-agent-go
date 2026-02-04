@@ -22,43 +22,46 @@ import (
 	"crypto/rsa"
 	"encoding/hex"
 	"fmt"
-	"github.com/golang-jwt/jwt/v4"
-	"github.com/pkg/errors"
-	"golang.org/x/crypto/ssh"
 	"math/big"
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/pkg/errors"
+	"golang.org/x/crypto/ssh"
 )
 
+//nolint:gochecknoglobals // Package-level configuration
 var IssueSecondsInPast int
 
-// MAX_TOKEN_DURATION is the maximum duration allowed on a signed token.
-const MAX_TOKEN_DURATION = 300
+// MaxTokenDuration is the maximum duration allowed on a signed token.
+const MaxTokenDuration = 300
 
-// Logger Really simple logger interface that all real loggers should be able to satisfy
+// Logger is a really simple logger interface that all real loggers should be able to satisfy.
 type Logger interface {
 	// Emit a message and key/value pairs at the DEBUG level
 	Debug(msg string, args ...interface{})
 }
 
-// SignedJwtToken takes a subject, and a public key string (as provided by ssh-agent or ssh-keygen) and creates a signed JWT Token by asking the ssh-agent politely to sign the token claims.  The token is good for MAX_TOKEN_DURATION seconds.  The audience of the JWT should be the server you're intending on sending the JWT to.
+// SignedJwtToken takes a subject, and a public key string (as provided by ssh-agent or ssh-keygen) and creates a signed JWT Token by asking the ssh-agent politely to sign the token claims.  The token is good for MaxTokenDuration seconds.  The audience of the JWT should be the server you're intending on sending the JWT to.
 func SignedJwtToken(subject string, audience, pubkey string) (token string, err error) {
 
-	var issueTs time.Time
+	var issueTS time.Time
 
 	if IssueSecondsInPast > 0 {
 
-		issueTs = time.Now().Add(-(time.Duration(int64(IssueSecondsInPast)) * time.Second))
+		issueTS = time.Now().Add(-(time.Duration(int64(IssueSecondsInPast)) * time.Second))
 
 	} else {
-		issueTs = time.Now()
+		issueTS = time.Now()
 	}
 
-	expiration := issueTs.Add(time.Duration(MAX_TOKEN_DURATION) * time.Second)
+	expiration := issueTS.Add(time.Duration(MaxTokenDuration) * time.Second)
 
 	rBytes := make([]byte, 32)
-	if _, err := rand.Read(rBytes); err != nil {
+	_, err = rand.Read(rBytes)
+	if err != nil {
 		err = errors.Wrapf(err, "failed generating random JWT id")
 		return token, err
 	}
@@ -67,8 +70,8 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 
 	claims := &jwt.RegisteredClaims{
 		ID:        id,
-		IssuedAt:  jwt.NewNumericDate(issueTs),
-		NotBefore: jwt.NewNumericDate(issueTs),
+		IssuedAt:  jwt.NewNumericDate(issueTS),
+		NotBefore: jwt.NewNumericDate(issueTS),
 		ExpiresAt: jwt.NewNumericDate(expiration),
 		Subject:   subject,
 		Issuer:    subject, // Subject and issuer match, cos that's how this ssh-agent pubkey auth stuff works - you auth yourself by proving you can sign a method with the private key.  It's up to the server to decide if it trusts you - based on your public key being registered.
@@ -80,7 +83,7 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 
 	// Pubkey must have an algorithm and key, separated by a space.  Comment is optional and ignored.
 	if len(parts) < 2 {
-		err = errors.New(fmt.Sprintf("not enough fields in public key"))
+		err = errors.New("not enough fields in public key")
 		return token, err
 	}
 
@@ -92,8 +95,9 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 	switch algo {
 	case "ssh-rsa":
 		signingMethodRS256Agent := &SigningMethodRSAAgent{"RS256", crypto.SHA256}
-		jwt.RegisterSigningMethod(signingMethodRS256Agent.Alg(), func() jwt.SigningMethod {
-			return signingMethodRS256Agent
+		jwt.RegisterSigningMethod(signingMethodRS256Agent.Alg(), func() (method jwt.SigningMethod) {
+			method = signingMethodRS256Agent
+			return method
 		})
 
 		tok = jwt.NewWithClaims(signingMethodRS256Agent, claims)
@@ -101,8 +105,9 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 	case "ssh-ed25519":
 		signingMethodED25519Agent := &SigningMethodED25519Agent{"EdDSA", crypto.SHA256}
 
-		jwt.RegisterSigningMethod(signingMethodED25519Agent.Alg(), func() jwt.SigningMethod {
-			return signingMethodED25519Agent
+		jwt.RegisterSigningMethod(signingMethodED25519Agent.Alg(), func() (method jwt.SigningMethod) {
+			method = signingMethodED25519Agent
+			return method
 		})
 
 		tok = jwt.NewWithClaims(signingMethodED25519Agent, claims)
@@ -112,7 +117,8 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 		return token, err
 	}
 
-	pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubkey))
+	var pubKey ssh.PublicKey
+	pubKey, _, _, _, err = ssh.ParseAuthorizedKey([]byte(pubkey))
 	if err != nil {
 		err = errors.Wrap(err, "failed parsing public key")
 		return token, err
@@ -137,15 +143,17 @@ func SignedJwtToken(subject string, audience, pubkey string) (token string, err 
 // Security of this method depends entirely on pubkeyFunc being able to produce a pubkey for the subject that corresponds to a private key held by the requestor.
 // Note: The signing mechanism must be registered with the JWT package before it can verify JWT's of this type:
 //
-//  You have to call something like this:
+//	You have to call something like this:
+//
 // signingMethodED25519Agent := &SigningMethodED25519Agent{"EdDSA", crypto.SHA256}
 //
-// jwtv4.RegisterSigningMethod(signingMethodED25519Agent.Alg(), func() jwtv4.SigningMethod {
-//	  return signingMethodED25519Agent
-// })
+//	jwtv4.RegisterSigningMethod(signingMethodED25519Agent.Alg(), func() jwtv4.SigningMethod {
+//		  return signingMethodED25519Agent
+//	})
 //
 // Before trying to call VerifyToken() or your JWT's will fail to parse - no matter how valid they are.
-
+//
+//nolint:gocognit,nestif,errcheck,funlen // Complex validation logic with nested type assertions
 func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject string) (pubkeys []string, err error), logger Logger) (subject string, token *jwt.Token, err error) {
 
 	// This is tricky.  we need to parse the claim to get the subject, so we know what key to verify it with.
@@ -162,7 +170,8 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 	subj := unverifiedClaims["sub"].(string)
 
 	// Run the pubkeyFunc with the subject to get the public keys for this user
-	pubkeys, err := pubkeyFunc(subj)
+	var pubkeys []string
+	pubkeys, err = pubkeyFunc(subj)
 	if err != nil {
 		err = errors.Wrapf(err, "error looking up public keys for %s", subj)
 		return subject, token, err
@@ -229,7 +238,9 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 		// The issuer must match the subject, or someone is doing something screwy
 		if iss != sub {
 			err = errors.New("Subject and Issuer of token do not match")
-			return "", nil, err
+			subject = ""
+			token = nil
+			return subject, token, err
 		}
 
 		// Unpack the standard claims and do some checking
@@ -237,28 +248,34 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 		var iat int
 		var nbf int
 
-		if expInt, ok := claims["exp"]; ok {
-			if expFloat, ok := expInt.(float64); ok {
+		expInt, expOK := claims["exp"]
+		if expOK {
+			expFloat, floatOK := expInt.(float64)
+			if floatOK {
 				exp = int(expFloat)
 			}
 		}
 
-		if iatInt, ok := claims["iat"]; ok {
-			if iatFloat, ok := iatInt.(float64); ok {
+		iatInt, iatOK := claims["iat"]
+		if iatOK {
+			iatFloat, floatOK := iatInt.(float64)
+			if floatOK {
 				iat = int(iatFloat)
 			}
 		}
 
-		if nbfInt, ok := claims["nbf"]; ok {
-			if nbfFloat, ok := nbfInt.(float64); ok {
+		nbfInt, nbfOK := claims["nbf"]
+		if nbfOK {
+			nbfFloat, floatOK := nbfInt.(float64)
+			if floatOK {
 				nbf = int(nbfFloat)
 			}
 		}
 
 		duration := exp - iat
 
-		aud, ok := claims["aud"].([]interface{})
-		if !ok {
+		aud, audOK := claims["aud"].([]interface{})
+		if !audOK {
 			err = errors.New("malformed token audience")
 			return subject, token, err
 		}
@@ -278,9 +295,9 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 			return subject, token, err
 		}
 
-		// Only allow tokens with an agreeably short duration (MAX_TOKEN_DURATION)
-		if duration > MAX_TOKEN_DURATION {
-			err = errors.New(fmt.Sprintf("Token duration too long (max %d seconds)", MAX_TOKEN_DURATION))
+		// Only allow tokens with an agreeably short duration (MaxTokenDuration)
+		if duration > MaxTokenDuration {
+			err = errors.New(fmt.Sprintf("Token duration too long (max %d seconds)", MaxTokenDuration))
 			return subject, token, err
 		}
 
@@ -297,10 +314,14 @@ func VerifyToken(tokenString string, audience []string, pubkeyFunc func(subject 
 	}
 
 	err = errors.New("token validation failed")
-	return "", nil, err
+	subject = ""
+	token = nil
+	return subject, token, err
 }
 
-// ParseAndCheckSig Parses the token string in to a token struct and verifies it's signature
+// ParseAndCheckSig parses the token string in to a token struct and verifies its signature.
+//
+//nolint:gocognit,errcheck // Complex token parsing logic with type assertions
 func ParseAndCheckSig(tokenString string, pubkey string, logger Logger) (subject string, token *jwt.Token, err error) {
 	// Run the pubkeyFunc to get the public key for this user
 
@@ -308,27 +329,17 @@ func ParseAndCheckSig(tokenString string, pubkey string, logger Logger) (subject
 	// Requires closure over 'subject' variable.  Subject is defined here in the parent function but it's set inside the closure below.
 	token, err = jwt.Parse(
 		tokenString,
-		func(token *jwt.Token) (key interface{}, err error) { // fugly anonymous function, but that's how jwt.Parse() works.
+		func(tok *jwt.Token) (key interface{}, keyErr error) { // fugly anonymous function, but that's how jwt.Parse() works.
 			// this is where subject gets set.
-			subject = token.Claims.(jwt.MapClaims)["sub"].(string)
-
-			//switch reflect.TypeOf(token.Method).String() {
-			//case "*agentjwt.SigningMethodRSAAgent":
-			//case "*agentjwt.SigningMethodED25519Agent":
-			//default:
-			//	t := reflect.TypeOf(token.Method)
-			//	err = errors.New(fmt.Sprintf("Unsupported signing method: %s", t.String()))
-			//
-			//	return token, err
-			//}
+			subject = tok.Claims.(jwt.MapClaims)["sub"].(string)
 
 			// If we don't get a public key for this user, the user isn't allowed in.
 			if pubkey == "" {
-				err = errors.New(fmt.Sprintf("unknown user %q", subject))
+				keyErr = errors.New(fmt.Sprintf("unknown user %q", subject))
 				if logger != nil {
 					logger.Debug(fmt.Sprintf("Unknown user %q", subject))
 				}
-				return token, err
+				return key, keyErr
 			}
 
 			// Figure out what algorithm is used, and switch on it
@@ -336,8 +347,8 @@ func ParseAndCheckSig(tokenString string, pubkey string, logger Logger) (subject
 
 			// Pubkey must have an algorithm and key, separated by a space.  Comment is optional and ignored.
 			if len(parts) < 2 {
-				err = errors.New(fmt.Sprintf("not enough fields in public key"))
-				return token, err
+				keyErr = errors.New("not enough fields in public key")
+				return key, keyErr
 			}
 
 			algo := parts[0]
@@ -348,13 +359,14 @@ func ParseAndCheckSig(tokenString string, pubkey string, logger Logger) (subject
 			switch algo {
 			case "ssh-rsa":
 				// need to convert from ssh.PublicKey to rsa.PublicKey  This is a mess.
-				pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubkey))
-				if err != nil {
-					err = errors.Wrapf(err, "failed parsing %s public key", algo)
+				var pubKey ssh.PublicKey
+				pubKey, _, _, _, keyErr = ssh.ParseAuthorizedKey([]byte(pubkey))
+				if keyErr != nil {
+					keyErr = errors.Wrapf(keyErr, "failed parsing %s public key", algo)
 					if logger != nil {
 						logger.Debug(fmt.Sprintf("Failed parsing %s public key", algo))
 					}
-					return key, err
+					return key, keyErr
 				}
 
 				// Only way to do this that I'm aware of is nastily via reflection.
@@ -366,32 +378,34 @@ func ParseAndCheckSig(tokenString string, pubkey string, logger Logger) (subject
 				modulus := val.Field(0).Interface().(*big.Int)
 				exponent := val.Field(1).Interface().(int)
 
-				var key rsa.PublicKey
-				key.E = exponent
-				key.N = modulus
+				var rsaKey rsa.PublicKey
+				rsaKey.E = exponent
+				rsaKey.N = modulus
 
 				// It does, however, work, and that's what counts.  Furthermore, it's what the rsa package appears to do under the surface, so I guess we're stuck either way.
-				return key, err
+				key = rsaKey
+				return key, keyErr
 
 			case "ssh-ed25519":
-				pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubkey))
-				if err != nil {
-					err = errors.Wrapf(err, "failed parsing %s public key", algo)
+				var pubKey ssh.PublicKey
+				pubKey, _, _, _, keyErr = ssh.ParseAuthorizedKey([]byte(pubkey))
+				if keyErr != nil {
+					keyErr = errors.Wrapf(keyErr, "failed parsing %s public key", algo)
 					if logger != nil {
 						logger.Debug(fmt.Sprintf("Failed parsing %s public key", algo))
 					}
-					return nil, err
+					return key, keyErr
 				}
 
 				key = pubKey
 
-				return key, err
+				return key, keyErr
 			default:
-				err = errors.New(fmt.Sprintf("unsupported key type %q", algo))
+				keyErr = errors.New(fmt.Sprintf("unsupported key type %q", algo))
 				if logger != nil {
 					logger.Debug(fmt.Sprintf("Fnsupported key type %q", algo))
 				}
-				return nil, err
+				return key, keyErr
 			}
 		},
 		jwt.WithValidMethods([]string{

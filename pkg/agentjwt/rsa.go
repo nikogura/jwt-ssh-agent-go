@@ -7,13 +7,14 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"github.com/dgrijalva/jwt-go"
-	"github.com/pkg/errors"
-	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/agent"
 	"net"
 	"os"
 	"reflect"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/pkg/errors"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 // SigningMethodRSAAgent is a JWT Signing method that produces RS256 signatures from a running ssh-agent.
@@ -22,19 +23,14 @@ type SigningMethodRSAAgent struct {
 	Hash crypto.Hash
 }
 
-// Alg returns the name of the name of the algorithm used by the signing method
-func (m *SigningMethodRSAAgent) Alg() string {
-	return m.Name
+// Alg returns the name of the name of the algorithm used by the signing method.
+func (m *SigningMethodRSAAgent) Alg() (name string) {
+	name = m.Name
+	return name
 }
 
-// Verify verifies the signature on the JWT Token in the normal JWT RS256 fashion
-func (m *SigningMethodRSAAgent) Verify(signingString, signature string, key interface{}) (err error) {
-	var sig []byte
-	if sig, err = jwt.DecodeSegment(signature); err != nil {
-		err = errors.Wrap(err, "failed to decode signature")
-		return err
-	}
-
+// Verify verifies the signature on the JWT Token in the normal JWT RS256 fashion.
+func (m *SigningMethodRSAAgent) Verify(signingString string, sig []byte, key interface{}) (err error) {
 	var rsaKey rsa.PublicKey
 	var ok bool
 
@@ -45,8 +41,8 @@ func (m *SigningMethodRSAAgent) Verify(signingString, signature string, key inte
 
 	// Create hasher
 	if !m.Hash.Available() {
-		err = errors.Wrap(err, "failed checking hash availability")
-		return jwt.ErrHashUnavailable
+		err = jwt.ErrHashUnavailable
+		return err
 	}
 	hasher := m.Hash.New()
 	hasher.Write([]byte(signingString))
@@ -61,8 +57,12 @@ func (m *SigningMethodRSAAgent) Verify(signingString, signature string, key inte
 	return err
 }
 
-// Sign sends a request to the running ssh-agent to sign the header and claims of the JWT.  This is pretty much the normal RS256 mechanism, but it doesn't require the private key in order to sign.  The private key is held by the ssh-agent.
-func (m *SigningMethodRSAAgent) Sign(signingString string, key interface{}) (sig string, err error) {
+// Sign sends a request to the running ssh-agent to sign the header and claims of the JWT.
+// This is pretty much the normal RS256 mechanism, but it doesn't require the private key in order to sign.
+// The private key is held by the ssh-agent.
+//
+//nolint:dupl,noctx // Similar to ED25519 Sign, net.Dial API
+func (m *SigningMethodRSAAgent) Sign(signingString string, key interface{}) (sig []byte, err error) {
 	var pubKey ssh.PublicKey
 	var ok bool
 
@@ -77,7 +77,8 @@ func (m *SigningMethodRSAAgent) Sign(signingString string, key interface{}) (sig
 		return sig, err
 	}
 
-	conn, err := net.Dial("unix", sock)
+	var conn net.Conn
+	conn, err = net.Dial("unix", sock)
 	if err != nil {
 		err = errors.Wrap(err, "failed to connect to SSH_AUTH_SOCK")
 		return sig, err
@@ -86,13 +87,14 @@ func (m *SigningMethodRSAAgent) Sign(signingString string, key interface{}) (sig
 	a := agent.NewClient(conn)
 
 	if a != nil {
-		signature, err := a.SignWithFlags(pubKey, []byte(signingString), agent.SignatureFlagRsaSha256)
+		var signature *ssh.Signature
+		signature, err = a.SignWithFlags(pubKey, []byte(signingString), agent.SignatureFlagRsaSha256)
 		if err != nil {
 			err = errors.Wrap(err, "failed to sign with agent")
 			return sig, err
 		}
 
-		sig = jwt.EncodeSegment(signature.Blob)
+		sig = signature.Blob
 	}
 
 	return sig, err
@@ -106,7 +108,8 @@ func GenerateRSAKey(privateKeyPath string, blockSize int) (err error) {
 	}
 
 	// generate private key
-	privateKey, err := rsa.GenerateKey(rand.Reader, blockSize)
+	var privateKey *rsa.PrivateKey
+	privateKey, err = rsa.GenerateKey(rand.Reader, blockSize)
 	if err != nil {
 		err = errors.Wrapf(err, "failed to generate key")
 		return err
@@ -119,7 +122,8 @@ func GenerateRSAKey(privateKeyPath string, blockSize int) (err error) {
 	}
 
 	// generate public key
-	publicKey, err := ssh.NewPublicKey(privateKey.Public())
+	var publicKey ssh.PublicKey
+	publicKey, err = ssh.NewPublicKey(privateKey.Public())
 	if err != nil {
 		err = errors.Wrapf(err, "failed to generate public key")
 		return err

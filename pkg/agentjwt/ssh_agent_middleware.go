@@ -2,14 +2,15 @@ package agentjwt
 
 import (
 	"crypto"
+	"errors"
 	"fmt"
-	"github.com/dgrijalva/jwt-go"
-	"github.com/gin-gonic/gin"
-	jwtv4 "github.com/golang-jwt/jwt/v4"
-	"github.com/jellydator/ttlcache/v3"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/jellydator/ttlcache/v3"
 )
 
 type SSHAgentTokenValidator struct {
@@ -20,13 +21,13 @@ type SSHAgentTokenValidator struct {
 
 type Response struct {
 	StatusCode int
-	JWT        jwtv4.Token
+	JWT        jwt.Token
 }
 
 func (v SSHAgentTokenValidator) ValidateAndPopulateToken(ctx *gin.Context) {
 	parts := strings.Split(ctx.GetHeader("Authorization"), " ")
 	if len(parts) < 2 {
-		ctx.AbortWithError(http.StatusBadRequest, fmt.Errorf("malformed token string"))
+		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("malformed token string"))
 		return
 	}
 
@@ -36,57 +37,57 @@ func (v SSHAgentTokenValidator) ValidateAndPopulateToken(ctx *gin.Context) {
 	// Register the ssh-agent signing method, or we won't be able to verify the signed tokens
 	signingMethodED25519Agent := &SigningMethodED25519Agent{"EdDSA", crypto.SHA256}
 
-	jwtv4.RegisterSigningMethod(signingMethodED25519Agent.Alg(), func() jwtv4.SigningMethod {
-		return signingMethodED25519Agent
+	jwt.RegisterSigningMethod(signingMethodED25519Agent.Alg(), func() (method jwt.SigningMethod) {
+		method = signingMethodED25519Agent
+		return method
 	})
 
 	sub, token, err := VerifyToken(tokenString, audience, v.PubKeyFunc, nil)
 	if err != nil {
-		ctx.AbortWithError(http.StatusUnauthorized, fmt.Errorf("invalid token or user not found: %s", err))
+		_ = ctx.AbortWithError(http.StatusUnauthorized, fmt.Errorf("invalid token or user not found: %w", err))
 		return
 	}
 
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		ctx.AbortWithError(http.StatusBadRequest, fmt.Errorf("unparsable token claims"))
+	claims, claimsOK := token.Claims.(jwt.MapClaims)
+	if !claimsOK {
+		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("unparsable token claims"))
 		return
 	}
 
-	jti, ok := claims["jti"].(string)
-	if !ok {
-		ctx.AbortWithError(http.StatusBadRequest, fmt.Errorf("unparsable jti claim"))
+	jti, jtiOK := claims["jti"].(string)
+	if !jtiOK {
+		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("unparsable jti claim"))
 		return
 	}
 
-	expires, ok := claims["exp"].(float64)
-	if !ok {
-		ctx.AbortWithError(http.StatusBadRequest, fmt.Errorf("unparsable exp claim"))
+	expires, expiresOK := claims["exp"].(float64)
+	if !expiresOK {
+		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("unparsable exp claim"))
 		return
 	}
 
 	cacheItem := v.Cache.Get(jti)
 
 	if cacheItem != nil {
-		ctx.AbortWithError(http.StatusBadRequest, fmt.Errorf("token already used"))
+		_ = ctx.AbortWithError(http.StatusBadRequest, errors.New("token already used"))
 		return
 	}
 
-	tExpire := time.Unix(int64(expires), 0).Sub(time.Now())
+	tExpire := time.Until(time.Unix(int64(expires), 0))
 
 	v.Cache.Set(jti, 1, tExpire)
 
 	ctx.Set("username", sub)
 	ctx.Set("token", token)
-
-	return
 }
 
-func (v SSHAgentTokenValidator) Middleware() gin.HandlerFunc {
-	return func(ctx *gin.Context) {
+func (v SSHAgentTokenValidator) Middleware() (handler gin.HandlerFunc) {
+	handler = func(ctx *gin.Context) {
 		if v.ValidateAndPopulateToken(ctx); ctx.IsAborted() {
 			return
 		}
 		// Pass on to the next-in-chain
 		ctx.Next()
 	}
+	return handler
 }
